@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>MiniPlayerBand</AssemblyName>
+    <RootNamespace>MiniPlayerBand</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- lets dotnet build net48 without Visual Studio installed -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <!-- deskband (IDeskBand2 COM plumbing) WinForms host -->
+    <PackageReference Include="CSDeskBand.Win" Version="2.1.0" />
+    <!-- WinRT SMTC projections (Windows.Media.Control) on .NET Framework -->
+    <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.19041.1" />
+  </ItemGroup>
+</Project>
