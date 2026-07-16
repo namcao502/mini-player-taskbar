@@ -65,8 +65,8 @@ namespace MiniPlayerBand
             _bg = TaskbarColor();  // sample the taskbar color first, so children are built with it
             Options.Title = "Mini Player";
             Options.ShowTitle = false;
-            Options.MinHorizontalSize = new CSDeskBand.Size(200, 20);
-            Options.HorizontalSize = new CSDeskBand.Size(200, 40);  // fixed width (min == desired) so it does not auto-resize
+            Options.MinHorizontalSize = new CSDeskBand.Size(150, 20);
+            Options.HorizontalSize = new CSDeskBand.Size(150, 40);  // fixed width (min == desired) so it does not auto-resize
             BackColor = _bg;
 
             _title.BackColor = _bg;
