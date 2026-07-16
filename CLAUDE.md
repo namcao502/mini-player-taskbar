@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Windows taskbar **deskband** — a C# `net48` COM shell extension (project at
 the repo root; `Band.cs`) that docks *inside* the Windows 10 taskbar and shows the current media
-session: album art, scrolling title, and prev / play-pause / next. It reads the
+session: album art, scrolling title, and prev / next (clicking the art toggles
+play/pause). It reads the
 active session via Windows SMTC (System Media Transport Controls) through WinRT,
 event-driven (no polling). Works with any app that reports to SMTC (YouTube
 Music in a browser, Spotify, etc.). Scrolling the wheel over the band changes
@@ -44,23 +45,23 @@ toolbar after Explorer restarts.
 ## Architecture (`Band.cs`)
 
 `Band : CSDeskBandWin` (a WinForms `UserControl`) builds its own children
-(`PictureBox` art, `MarqueeLabel` title, three `IconButton`s). Non-obvious
-constraints, most learned the hard way:
+(`PictureBox` art, `MarqueeLabel` title, two `IconButton`s — prev/next; the art
+`Click` toggles play/pause). Non-obvious constraints, most learned the hard way:
 
 - **The base ctor creates the window handle before the derived ctor body runs.**
   So `OnHandleCreated`/`OnLayout` can fire while `_art`/`_title`/buttons are
   still null — both guard against that (and SMTC is started from
   `OnHandleCreated`, not a `HandleCreated += ` subscription, which would miss the
-  event). Theming that touches the child controls runs at the *end* of the ctor.
+  event). The taskbar color is sampled *first* in the ctor so every child is
+  built with the right background.
 - **No WinForms `SynchronizationContext` in Explorer**, so `await`s resume off
   the UI thread. Every UI mutation goes through `UiPost` (`BeginInvoke`); SMTC
   work is done first, then marshaled. Forgetting this = silent cross-thread
   failures (blank UI, dead buttons).
 - **SMTC is event-driven:** `CurrentSessionChanged` re-hooks the session;
-  `MediaPropertiesChanged` → `RefreshAsync`; `PlaybackInfoChanged` →
-  `UpdatePlayState`. `RefreshAsync` reloads album art on *every* metadata change
-  (art can lag a track otherwise) and is guarded by `_refreshSeq` so out-of-order
-  async reads can't apply a stale image.
+  `MediaPropertiesChanged` → `RefreshAsync`. `RefreshAsync` reloads album art on
+  *every* metadata change (art can lag a track otherwise) and is guarded by
+  `_refreshSeq` so out-of-order async reads can't apply a stale image.
 - **Album art** comes from `props.Thumbnail` read via `DataReader`; failures
   fall back to a solid placeholder.
 - **Background matches the taskbar** by sampling the most common pixel color of

@@ -1,9 +1,10 @@
 // Mini media player as a Windows taskbar deskband.
 //
 // A COM shell extension (CSDeskBand does the IDeskBand2 plumbing) that reads
-// the active SMTC session and shows album art plus prev / play-pause / next
-// (owner-drawn Segoe MDL2 icon buttons) in the taskbar. Event-driven, no polling.
-// Long titles scroll smoothly. Mouse wheel over the band changes system volume.
+// the active SMTC session and shows album art plus prev / next (owner-drawn
+// Segoe MDL2 icon buttons) in the taskbar; clicking the art toggles play/pause.
+// Event-driven, no polling. Long titles scroll smoothly. Mouse wheel over the
+// band changes system volume.
 //
 // Deprecated tech: deskbands work on Windows 10, but were removed in Windows 11.
 // Build:     dotnet build -c Release
@@ -44,8 +45,6 @@ namespace MiniPlayerBand
         // Segoe MDL2 Assets glyphs.
         const string GlyphPrev = "\uE892";
         const string GlyphNext = "\uE893";
-        const string GlyphPlay = "\uE768";
-        const string GlyphPause = "\uE769";
 
         static readonly Color Fg = Color.FromArgb(240, 240, 240);
         Color _bg = Color.FromArgb(32, 32, 32);  // taskbar color; sampled from the real taskbar at startup
@@ -56,7 +55,6 @@ namespace MiniPlayerBand
         readonly PictureBox _art = new();
         readonly MarqueeLabel _title = new();
         readonly IconButton _prev;
-        readonly IconButton _play;
         readonly IconButton _next;
         Bitmap _placeholder;
 
@@ -70,6 +68,7 @@ namespace MiniPlayerBand
 
         public Band()
         {
+            _bg = TaskbarColor();  // sample the taskbar color first, so children are built with it
             Options.Title = "Mini Player";
             Options.ShowTitle = false;
             Options.MinHorizontalSize = new CSDeskBand.Size(200, 20);
@@ -94,19 +93,14 @@ namespace MiniPlayerBand
             Controls.Add(_title);
 
             _prev = MakeButton(GlyphPrev, x => x.TrySkipPreviousAsync());
-            _play = MakeButton(GlyphPlay, x => x.TryTogglePlayPauseAsync());
             _next = MakeButton(GlyphNext, x => x.TrySkipNextAsync());
             Controls.Add(_prev);
-            Controls.Add(_play);
             Controls.Add(_next);
 
             // Wheel over any part of the band adjusts volume.
-            foreach (Control c in new Control[] { this, _art, _title, _prev, _play, _next })
+            foreach (Control c in new Control[] { this, _art, _title, _prev, _next })
                 c.MouseWheel += OnWheel;
             _volTimer.Tick += (s, e) => { _volTimer.Stop(); _title.Text = _trackTitle; };  // restore title
-
-            _bg = TaskbarColor();  // match the taskbar's own background color
-            ApplyTheme();
         }
 
         // Central title setter: don't overwrite the volume readout while it is showing.
@@ -141,12 +135,12 @@ namespace MiniPlayerBand
                 e.Graphics.FillRectangle(b, ClientRectangle);
         }
 
-        // Height-adaptive: square art fills the band height, three icon buttons
+        // Height-adaptive: square art fills the band height, the two icon buttons
         // pin to the right (centered, never clipped), scrolling title in between.
         protected override void OnLayout(LayoutEventArgs e)
         {
             base.OnLayout(e);
-            if (_art == null || _title == null || _prev == null || _play == null || _next == null) return;
+            if (_art == null || _title == null || _prev == null || _next == null) return;
             int h = ClientSize.Height, w = ClientSize.Width;
             if (h <= 0 || w <= 0) return;
 
@@ -158,10 +152,8 @@ namespace MiniPlayerBand
 
             _art.SetBounds(pad, pad, side, side);
             int nextX = w - pad - bw;
-            int playX = nextX - bw;
-            int prevX = playX - bw;
+            int prevX = nextX - bw;
             _next.SetBounds(nextX, by, bw, bh);
-            _play.SetBounds(playX, by, bw, bh);
             _prev.SetBounds(prevX, by, bw, bh);
 
             int titleX = pad + side + 6;
@@ -188,21 +180,14 @@ namespace MiniPlayerBand
         void HookSession()
         {
             if (_session != null)
-            {
                 _session.MediaPropertiesChanged -= OnMediaProps;
-                _session.PlaybackInfoChanged -= OnPlayback;
-            }
             _session = _mgr.GetCurrentSession();
             if (_session != null)
-            {
                 _session.MediaPropertiesChanged += OnMediaProps;
-                _session.PlaybackInfoChanged += OnPlayback;
-            }
             _ = RefreshAsync();
         }
 
         void OnMediaProps(Session s, MediaPropertiesChangedEventArgs e) => UiPost(() => { _ = RefreshAsync(); });
-        void OnPlayback(Session s, PlaybackInfoChangedEventArgs e) => UiPost(UpdatePlayState);
 
         // Marshal an action onto the control's UI thread.
         void UiPost(Action a)
@@ -217,7 +202,7 @@ namespace MiniPlayerBand
             var s = _session;
             if (s == null)
             {
-                UiPost(() => { if (seq == _refreshSeq) { SetTitle("No media"); ReplaceBase(null); ShowArt(); _play.Glyph = GlyphPlay; } });
+                UiPost(() => { if (seq == _refreshSeq) { SetTitle("No media"); ReplaceBase(null); ShowArt(); } });
                 return;
             }
             try
@@ -227,7 +212,6 @@ namespace MiniPlayerBand
                 string artist = props.Artist ?? "";
                 string display = title.Length == 0 ? "No media"
                                : (artist.Length == 0 ? title : title + "  -  " + artist);
-                bool playing = IsPlaying(s);
                 Bitmap art = await LoadBaseArt(props);  // always reload so art can't lag behind the track
 
                 UiPost(() =>
@@ -236,20 +220,10 @@ namespace MiniPlayerBand
                     SetTitle(display);
                     ReplaceBase(art);
                     ShowArt();
-                    _play.Glyph = playing ? GlyphPause : GlyphPlay;
                 });
             }
             catch { }
         }
-
-        void UpdatePlayState()
-        {
-            var s = _session;
-            _play.Glyph = (s != null && IsPlaying(s)) ? GlyphPause : GlyphPlay;
-        }
-
-        static bool IsPlaying(Session s) =>
-            s.GetPlaybackInfo().PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
 
         async Task RunCommand(Func<Session, IAsyncOperation<bool>> op)
         {
@@ -289,24 +263,7 @@ namespace MiniPlayerBand
 
         void ShowArt() => _art.Image = _baseArt ?? _placeholder;
 
-        // ---- theming: match the taskbar's own background color ----
-
-        void ApplyTheme()
-        {
-            BackColor = _bg;
-            _art.BackColor = _bg;
-            _title.BackColor = _bg;
-            _prev.BackColor = _bg;
-            _play.BackColor = _bg;
-            _next.BackColor = _bg;
-
-            var old = _placeholder;
-            _placeholder = new Bitmap(Badge, Badge);
-            using (var g = Graphics.FromImage(_placeholder)) g.Clear(_bg);
-            if (_baseArt == null) ShowArt();
-            old?.Dispose();
-            Invalidate(true);
-        }
+        // ---- taskbar color sampling ----
 
         [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern IntPtr FindWindow(string cls, string win);
         [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hwnd);
