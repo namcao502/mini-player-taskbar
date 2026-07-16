@@ -1,10 +1,10 @@
 // Mini media player as a Windows taskbar deskband.
 //
 // A COM shell extension (CSDeskBand does the IDeskBand2 plumbing) that reads
-// the active SMTC session and shows album art plus prev / next (owner-drawn
-// Segoe MDL2 icon buttons) in the taskbar; clicking the art toggles play/pause.
-// Event-driven, no polling. Long titles scroll smoothly. Mouse wheel over the
-// band changes system volume.
+// the active SMTC session and shows a prev button, the track title + artist (two
+// scrolling rows), and a next button in the taskbar; clicking the title toggles
+// play/pause. Event-driven, no polling. Long rows scroll smoothly on hover.
+// Mouse wheel over the band changes system volume.
 //
 // Deprecated tech: deskbands work on Windows 10, but were removed in Windows 11.
 // Build:     dotnet build -c Release
@@ -19,7 +19,6 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -27,7 +26,6 @@ using CSDeskBand;
 using CSDeskBand.Win;
 using Windows.Foundation;
 using Windows.Media.Control;
-using Windows.Storage.Streams;
 
 namespace MiniPlayerBand
 {
@@ -40,8 +38,6 @@ namespace MiniPlayerBand
     [CSDeskBandRegistration(Name = "Mini Player", ShowDeskBand = true)]
     public class Band : CSDeskBandWin
     {
-        const int Badge = 32;  // art bitmap size, then stretched to the band height
-
         // Segoe MDL2 Assets glyphs.
         const string GlyphPrev = "\uE892";
         const string GlyphNext = "\uE893";
@@ -52,19 +48,17 @@ namespace MiniPlayerBand
         internal static Color Lighten(Color c, int d) =>
             Color.FromArgb(Math.Min(255, c.R + d), Math.Min(255, c.G + d), Math.Min(255, c.B + d));
 
-        readonly PictureBox _art = new();
         readonly MarqueeLabel _title = new();
         readonly IconButton _prev;
         readonly IconButton _next;
-        Bitmap _placeholder;
 
         SessionManager _mgr;
         Session _session;
-        Bitmap _baseArt;      // current track's album art (owned; disposed on replace)
         int _refreshSeq;      // newest RefreshAsync wins; older async reads are dropped
         bool _inited;         // guard so Init runs once
         string _trackTitle = "No media";                        // real title, restored after the volume readout
         readonly Timer _volTimer = new() { Interval = 1200 };   // how long the volume number stays
+        readonly Timer _clearTimer = new() { Interval = 800 };  // debounce before falling back to "No media"
 
         public Band()
         {
@@ -75,21 +69,12 @@ namespace MiniPlayerBand
             Options.HorizontalSize = new CSDeskBand.Size(200, 40);  // fixed width (min == desired) so it does not auto-resize
             BackColor = _bg;
 
-            _placeholder = new Bitmap(Badge, Badge);
-            using (var g = Graphics.FromImage(_placeholder))
-                g.Clear(_bg);
-
-            _art.SizeMode = PictureBoxSizeMode.StretchImage;  // scales to the band height
-            _art.BackColor = _bg;
-            _art.Image = _placeholder;
-            _art.Cursor = Cursors.Hand;
-            _art.Click += async (s, e) => await RunCommand(x => x.TryTogglePlayPauseAsync());  // art also toggles
-            Controls.Add(_art);
-
             _title.BackColor = _bg;
             _title.ForeColor = Fg;
             _title.Font = new Font("Segoe UI", 9f);
             _title.Text = "No media";
+            _title.Cursor = Cursors.Hand;
+            _title.Click += async (s, e) => await RunCommand(x => x.TryTogglePlayPauseAsync());  // click title toggles too
             Controls.Add(_title);
 
             _prev = MakeButton(GlyphPrev, x => x.TrySkipPreviousAsync());
@@ -98,9 +83,10 @@ namespace MiniPlayerBand
             Controls.Add(_next);
 
             // Wheel over any part of the band adjusts volume.
-            foreach (Control c in new Control[] { this, _art, _title, _prev, _next })
+            foreach (Control c in new Control[] { this, _title, _prev, _next })
                 c.MouseWheel += OnWheel;
             _volTimer.Tick += (s, e) => { _volTimer.Stop(); _title.Text = _trackTitle; };  // restore title
+            _clearTimer.Tick += (s, e) => { _clearTimer.Stop(); SetTitle("No media"); };
         }
 
         // Central title setter: don't overwrite the volume readout while it is showing.
@@ -135,29 +121,26 @@ namespace MiniPlayerBand
                 e.Graphics.FillRectangle(b, ClientRectangle);
         }
 
-        // Height-adaptive: square art fills the band height, the two icon buttons
-        // pin to the right (centered, never clipped), scrolling title in between.
+        // Height-adaptive: prev button pinned left, next button pinned right, the
+        // scrolling title fills the middle. Buttons vertically centered, never clipped.
         protected override void OnLayout(LayoutEventArgs e)
         {
             base.OnLayout(e);
-            if (_art == null || _title == null || _prev == null || _next == null) return;
+            if (_title == null || _prev == null || _next == null) return;
             int h = ClientSize.Height, w = ClientSize.Width;
             if (h <= 0 || w <= 0) return;
 
             const int pad = 2;
-            int side = Math.Max(1, h - pad * 2);          // art is square = band height
             int bw = Math.Min(34, Math.Max(22, w / 12));  // button width
             int bh = Math.Min(h - pad * 2, 32);           // button height (capped)
             int by = (h - bh) / 2;                        // vertically centered
 
-            _art.SetBounds(pad, pad, side, side);
+            _prev.SetBounds(pad, by, bw, bh);
             int nextX = w - pad - bw;
-            int prevX = nextX - bw;
             _next.SetBounds(nextX, by, bw, bh);
-            _prev.SetBounds(prevX, by, bw, bh);
 
-            int titleX = pad + side + 6;
-            _title.SetBounds(titleX, 0, Math.Max(0, prevX - titleX - 4), h);
+            int titleX = pad + bw + 4;
+            _title.SetBounds(titleX, 0, Math.Max(0, nextX - titleX - 4), h);
         }
 
         // ---- SMTC wiring (events, no polling) ----
@@ -200,29 +183,35 @@ namespace MiniPlayerBand
         {
             int seq = ++_refreshSeq;  // only the newest refresh may touch the UI
             var s = _session;
-            if (s == null)
-            {
-                UiPost(() => { if (seq == _refreshSeq) { SetTitle("No media"); ReplaceBase(null); ShowArt(); } });
-                return;
-            }
+            if (s == null) { UiPost(() => ScheduleNoMedia(seq)); return; }
             try
             {
                 MediaProps props = await s.TryGetMediaPropertiesAsync();
                 string title = props.Title ?? "";
+                // Empty title (or a null session above) is usually a transient gap while
+                // skipping tracks. Don't clear yet — let the debounce decide.
+                if (title.Length == 0) { UiPost(() => ScheduleNoMedia(seq)); return; }
                 string artist = props.Artist ?? "";
-                string display = title.Length == 0 ? "No media"
-                               : (artist.Length == 0 ? title : title + "  -  " + artist);
-                Bitmap art = await LoadBaseArt(props);  // always reload so art can't lag behind the track
+                // Two rows: title on top, artist below (newline = second line in MarqueeLabel).
+                string display = artist.Length == 0 ? title : title + "\n" + artist;
 
                 UiPost(() =>
                 {
-                    if (seq != _refreshSeq) { art?.Dispose(); return; }  // superseded by a newer refresh
+                    if (seq != _refreshSeq) return;  // superseded by a newer refresh
+                    _clearTimer.Stop();  // real data arrived; cancel any pending "No media"
                     SetTitle(display);
-                    ReplaceBase(art);
-                    ShowArt();
                 });
             }
             catch { }
+        }
+
+        // Fall back to "No media" only if no real track shows up within the debounce
+        // window, so a brief null/empty gap while skipping doesn't flash the placeholder.
+        void ScheduleNoMedia(int seq)
+        {
+            if (seq != _refreshSeq) return;
+            _clearTimer.Stop();
+            _clearTimer.Start();
         }
 
         async Task RunCommand(Func<Session, IAsyncOperation<bool>> op)
@@ -232,36 +221,6 @@ namespace MiniPlayerBand
             try { await op(s); }
             catch { }  // keep the band alive
         }
-
-        // ---- album art ----
-
-        static async Task<Bitmap> LoadBaseArt(MediaProps props)
-        {
-            var reft = props.Thumbnail;
-            if (reft == null) return null;
-            try
-            {
-                using (var stream = await reft.OpenReadAsync())
-                {
-                    var reader = new DataReader(stream);
-                    await reader.LoadAsync((uint)stream.Size);
-                    var bytes = new byte[stream.Size];
-                    reader.ReadBytes(bytes);
-                    using (var ms = new MemoryStream(bytes))
-                    using (var src = Image.FromStream(ms))
-                        return new Bitmap(src, Badge, Badge);
-                }
-            }
-            catch { return null; }  // missing/corrupt thumbnail -> placeholder
-        }
-
-        void ReplaceBase(Bitmap b)
-        {
-            _baseArt?.Dispose();
-            _baseArt = b;
-        }
-
-        void ShowArt() => _art.Image = _baseArt ?? _placeholder;
 
         // ---- taskbar color sampling ----
 
@@ -344,14 +303,15 @@ namespace MiniPlayerBand
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { _baseArt?.Dispose(); _placeholder?.Dispose(); _volTimer?.Dispose(); }
+            if (disposing) { _volTimer?.Dispose(); _clearTimer?.Dispose(); }
             base.Dispose(disposing);
         }
     }
 
-    // Smoothly scrolling single-line text. Double-buffered custom paint (not a
-    // moving child control). Position is time-based so uneven WM_TIMER firing in
-    // Explorer doesn't stutter. Centers short text; loops long text seamlessly.
+    // Smoothly scrolling text, one or two rows (split on '\n'). Double-buffered
+    // custom paint (not a moving child control). Position is time-based so uneven
+    // WM_TIMER firing in Explorer doesn't stutter. Each row centers when short and
+    // loops seamlessly when it overflows.
     sealed class MarqueeLabel : Control
     {
         const int Gap = 48;       // blank space between repeats, px
@@ -361,7 +321,9 @@ namespace MiniPlayerBand
         readonly Timer _timer = new() { Interval = 16 };  // ~60 fps
         readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
         Bitmap _buffer;
-        int _textWidth, _textHeight;
+        string[] _lines = { "" };  // 1 or 2 rows
+        int[] _lineW = { 0 };      // measured pixel width per row
+        int _lineH;                // single-row text height
         bool _scroll, _overflow, _hover;
 
         public MarqueeLabel()
@@ -384,10 +346,16 @@ namespace MiniPlayerBand
 
         void Measure()
         {
-            var size = TextRenderer.MeasureText(Text, Font, new System.Drawing.Size(int.MaxValue, 100), TFlags);
-            _textWidth = size.Width;
-            _textHeight = size.Height;
-            _overflow = _textWidth > Width;
+            _lines = (Text ?? "").Split('\n');
+            if (_lines.Length > 2) _lines = new[] { _lines[0], _lines[1] };  // cap at two rows
+            _lineH = TextRenderer.MeasureText("Ag", Font, new System.Drawing.Size(int.MaxValue, 100), TFlags).Height;
+            _lineW = new int[_lines.Length];
+            _overflow = false;
+            for (int i = 0; i < _lines.Length; i++)
+            {
+                _lineW[i] = TextRenderer.MeasureText(_lines[i], Font, new System.Drawing.Size(int.MaxValue, 100), TFlags).Width;
+                if (_lineW[i] > Width) _overflow = true;
+            }
             UpdateScroll();
         }
 
@@ -429,18 +397,25 @@ namespace MiniPlayerBand
             using (var g = Graphics.FromImage(_buffer))
             {
                 g.Clear(BackColor);
-                int y = (h - _textHeight) / 2;
-                if (_scroll)
+                int rows = _lines.Length;
+                int rowH = h / rows;
+                for (int i = 0; i < rows; i++)
                 {
-                    int period = _textWidth + Gap;
-                    int off = (int)((_clock.Elapsed.TotalSeconds * Speed) % period);
-                    TextRenderer.DrawText(g, Text, Font, new System.Drawing.Point(-off, y), ForeColor, BackColor, TFlags);
-                    TextRenderer.DrawText(g, Text, Font, new System.Drawing.Point(-off + period, y), ForeColor, BackColor, TFlags);  // seamless loop
-                }
-                else
-                {
-                    int x = _overflow ? 0 : Math.Max(0, (w - _textWidth) / 2);  // pin overflow left, center short
-                    TextRenderer.DrawText(g, Text, Font, new System.Drawing.Point(x, y), ForeColor, BackColor, TFlags);
+                    string line = _lines[i];
+                    int lw = _lineW[i];
+                    int y = i * rowH + (rowH - _lineH) / 2;  // center within the row band
+                    if (_scroll && lw > w)
+                    {
+                        int period = lw + Gap;
+                        int off = (int)((_clock.Elapsed.TotalSeconds * Speed) % period);
+                        TextRenderer.DrawText(g, line, Font, new System.Drawing.Point(-off, y), ForeColor, BackColor, TFlags);
+                        TextRenderer.DrawText(g, line, Font, new System.Drawing.Point(-off + period, y), ForeColor, BackColor, TFlags);  // seamless loop
+                    }
+                    else
+                    {
+                        int x = lw > w ? 0 : Math.Max(0, (w - lw) / 2);  // pin overflow left, center short
+                        TextRenderer.DrawText(g, line, Font, new System.Drawing.Point(x, y), ForeColor, BackColor, TFlags);
+                    }
                 }
             }
             target.DrawImageUnscaled(_buffer, 0, 0);

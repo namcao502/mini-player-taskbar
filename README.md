@@ -1,9 +1,10 @@
 # Mini Player — Windows Taskbar Deskband
 
-A tiny media player that docks **inside the Windows 10 taskbar**. It shows the
-currently playing track's album art, a scrolling title, and previous / next
-controls (click the art to play/pause) — for any app that reports to Windows
-SMTC (System Media Transport Controls): YouTube Music in a browser, Spotify, etc.
+A tiny media player that docks **inside the Windows 10 taskbar**. It shows a
+previous button, the current track's title and artist on two scrolling rows, and
+a next button (click the title to play/pause) — for any app that reports to
+Windows SMTC (System Media Transport Controls): YouTube Music in a browser,
+Spotify, etc.
 
 Scroll the mouse wheel over the band to change system volume.
 
@@ -12,8 +13,8 @@ Scroll the mouse wheel over the band to change system volume.
 
 ## Features
 
-- Album art + scrolling track title + prev / next
-- Click the album art to toggle play/pause
+- Prev / next buttons with the track title + artist on two scrolling rows
+- Click the title to toggle play/pause
 - Mouse wheel over the band changes system volume by 2 units per notch (no OSD banner)
 - Background samples and matches your taskbar color
 - Event-driven via SMTC (no polling); title scrolls only while hovered
