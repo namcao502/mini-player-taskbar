@@ -60,6 +60,13 @@ namespace MiniPlayerBand
         readonly Timer _volTimer = new() { Interval = 1200 };   // how long the volume number stays
         readonly Timer _clearTimer = new() { Interval = 800 };  // debounce before falling back to "No media"
 
+        // Progress bar: last timeline snapshot + interpolation while playing.
+        const int BarH = 2;                                        // progress bar height, px
+        readonly Timer _progressTimer = new() { Interval = 1000 }; // advances the bar between SMTC timeline events
+        TimeSpan _tlStart, _tlEnd, _tlPos;                         // last timeline snapshot
+        long _tlStamp;                                             // Stopwatch ticks when the snapshot was taken
+        bool _playing;
+
         public Band()
         {
             _bg = TaskbarColor();  // sample the taskbar color first, so children are built with it
@@ -87,6 +94,7 @@ namespace MiniPlayerBand
                 c.MouseWheel += OnWheel;
             _volTimer.Tick += (s, e) => { _volTimer.Stop(); _title.Text = _trackTitle; };  // restore title
             _clearTimer.Tick += (s, e) => { _clearTimer.Stop(); SetTitle("No media"); };
+            _progressTimer.Tick += (s, e) => InvalidateBar();
         }
 
         // Central title setter: don't overwrite the volume readout while it is showing.
@@ -119,6 +127,24 @@ namespace MiniPlayerBand
         {
             using (var b = new SolidBrush(_bg))
                 e.Graphics.FillRectangle(b, ClientRectangle);
+            DrawProgress(e.Graphics);
+        }
+
+        // Thin bar along the bottom edge: dim track + brighter filled portion.
+        void DrawProgress(Graphics g)
+        {
+            double f = ProgressFraction();
+            if (f < 0) return;  // no/unknown duration -> no bar
+            int w = ClientSize.Width, y = ClientSize.Height - BarH;
+            using (var track = new SolidBrush(Lighten(_bg, 24)))
+                g.FillRectangle(track, 0, y, w, BarH);
+            using (var fill = new SolidBrush(Fg))
+                g.FillRectangle(fill, 0, y, (int)(w * f), BarH);
+        }
+
+        void InvalidateBar()
+        {
+            if (IsHandleCreated) Invalidate(new Rectangle(0, ClientSize.Height - BarH, ClientSize.Width, BarH));
         }
 
         // Height-adaptive: prev button pinned left, next button pinned right, the
@@ -131,16 +157,17 @@ namespace MiniPlayerBand
             if (h <= 0 || w <= 0) return;
 
             const int pad = 2;
-            int bw = Math.Min(34, Math.Max(22, w / 12));  // button width
-            int bh = Math.Min(h - pad * 2, 32);           // button height (capped)
-            int by = (h - bh) / 2;                        // vertically centered
+            int usableH = h - BarH;                            // leave the bottom strip for the progress bar
+            int bw = Math.Min(34, Math.Max(22, w / 12));       // button width
+            int bh = Math.Min(usableH - pad * 2, 32);          // button height (capped)
+            int by = (usableH - bh) / 2;                       // vertically centered above the bar
 
             _prev.SetBounds(pad, by, bw, bh);
             int nextX = w - pad - bw;
             _next.SetBounds(nextX, by, bw, bh);
 
             int titleX = pad + bw + 4;
-            _title.SetBounds(titleX, 0, Math.Max(0, nextX - titleX - 4), h);
+            _title.SetBounds(titleX, 0, Math.Max(0, nextX - titleX - 4), usableH);
         }
 
         // ---- SMTC wiring (events, no polling) ----
@@ -163,14 +190,63 @@ namespace MiniPlayerBand
         void HookSession()
         {
             if (_session != null)
+            {
                 _session.MediaPropertiesChanged -= OnMediaProps;
+                _session.TimelinePropertiesChanged -= OnTimeline;
+                _session.PlaybackInfoChanged -= OnPlayback;
+            }
             _session = _mgr.GetCurrentSession();
             if (_session != null)
+            {
                 _session.MediaPropertiesChanged += OnMediaProps;
+                _session.TimelinePropertiesChanged += OnTimeline;
+                _session.PlaybackInfoChanged += OnPlayback;
+            }
+            ReadPlayback();  // also reads the timeline
             _ = RefreshAsync();
         }
 
         void OnMediaProps(Session s, MediaPropertiesChangedEventArgs e) => UiPost(() => { _ = RefreshAsync(); });
+        void OnTimeline(Session s, TimelinePropertiesChangedEventArgs e) => UiPost(ReadTimeline);
+        void OnPlayback(Session s, PlaybackInfoChangedEventArgs e) => UiPost(ReadPlayback);
+
+        // Snapshot the current position/duration and repaint the bar. UI thread.
+        void ReadTimeline()
+        {
+            var s = _session;
+            try
+            {
+                var t = s?.GetTimelineProperties();
+                _tlStart = t?.StartTime ?? TimeSpan.Zero;
+                _tlEnd = t?.EndTime ?? TimeSpan.Zero;
+                _tlPos = t?.Position ?? TimeSpan.Zero;
+                _tlStamp = System.Diagnostics.Stopwatch.GetTimestamp();
+            }
+            catch { _tlEnd = _tlStart; }  // treat as no-duration -> bar hidden
+            _progressTimer.Enabled = _playing && _tlEnd > _tlStart && IsHandleCreated;
+            InvalidateBar();
+        }
+
+        // Read play/pause state, then re-anchor the timeline from source of truth. UI thread.
+        void ReadPlayback()
+        {
+            var s = _session;
+            try { _playing = s != null && s.GetPlaybackInfo().PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing; }
+            catch { _playing = false; }
+            ReadTimeline();
+        }
+
+        // 0..1 played fraction, interpolated by wall-clock while playing; -1 = hide.
+        double ProgressFraction()
+        {
+            TimeSpan dur = _tlEnd - _tlStart;
+            if (dur <= TimeSpan.Zero) return -1;
+            TimeSpan pos = _tlPos - _tlStart;
+            if (_playing)
+                pos += TimeSpan.FromSeconds((System.Diagnostics.Stopwatch.GetTimestamp() - _tlStamp) / (double)System.Diagnostics.Stopwatch.Frequency);
+            double f = pos.TotalSeconds / dur.TotalSeconds;
+            return f < 0 ? 0 : f > 1 ? 1 : f;
+        }
 
         // Marshal an action onto the control's UI thread.
         void UiPost(Action a)
@@ -303,7 +379,7 @@ namespace MiniPlayerBand
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { _volTimer?.Dispose(); _clearTimer?.Dispose(); }
+            if (disposing) { _volTimer?.Dispose(); _clearTimer?.Dispose(); _progressTimer?.Dispose(); }
             base.Dispose(disposing);
         }
     }
