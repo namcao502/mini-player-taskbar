@@ -264,9 +264,22 @@ namespace MiniPlayerBand
             {
                 MediaProps props = await s.TryGetMediaPropertiesAsync();
                 string title = props.Title ?? "";
-                // Empty title (or a null session above) is usually a transient gap while
-                // skipping tracks. Don't clear yet — let the debounce decide.
-                if (title.Length == 0) { UiPost(() => ScheduleNoMedia(seq)); return; }
+                // Empty title while the session is still alive = the next track is loading
+                // (a browser skip can gap for seconds). Keep the old track shown; only fall
+                // back to "No media" when playback has genuinely ended (Stopped/Closed).
+                if (title.Length == 0)
+                {
+                    bool ended;
+                    try
+                    {
+                        var st = s.GetPlaybackInfo().PlaybackStatus;
+                        ended = st == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped
+                             || st == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Closed;
+                    }
+                    catch { ended = true; }
+                    if (ended) UiPost(() => ScheduleNoMedia(seq));  // else keep the current track (no flash)
+                    return;
+                }
                 string artist = props.Artist ?? "";
                 // Two rows: title on top, artist below (newline = second line in MarqueeLabel).
                 string display = artist.Length == 0 ? title : title + "\n" + artist;
@@ -394,7 +407,7 @@ namespace MiniPlayerBand
         const float Speed = 60f;  // scroll speed, px per second
         const TextFormatFlags TFlags = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
 
-        readonly Timer _timer = new() { Interval = 16 };  // ~60 fps
+        readonly Timer _timer = new() { Interval = 8 };  // up to ~120 fps; WM_TIMER floors near 15ms unless the system timer resolution is raised (browsers playing media usually do)
         readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
         Bitmap _buffer;
         string[] _lines = { "" };  // 1 or 2 rows
