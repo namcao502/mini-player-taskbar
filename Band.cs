@@ -399,6 +399,10 @@ namespace MiniPlayerBand
                 g.Clear(BackColor);
                 int rows = _lines.Length;
                 int rowH = h / rows;
+                int maxW = w;
+                foreach (int lwi in _lineW) if (lwi > maxW) maxW = lwi;
+                int period = maxW + Gap;  // shared: both rows reset together, short one waits for the long one
+                int off = (int)((_clock.Elapsed.TotalSeconds * Speed) % period);
                 for (int i = 0; i < rows; i++)
                 {
                     string line = _lines[i];
@@ -406,15 +410,12 @@ namespace MiniPlayerBand
                     int y = i * rowH + (rowH - _lineH) / 2;  // center within the row band
                     if (_scroll && lw > w)
                     {
-                        int period = lw + Gap;
-                        int off = (int)((_clock.Elapsed.TotalSeconds * Speed) % period);
                         TextRenderer.DrawText(g, line, Font, new System.Drawing.Point(-off, y), ForeColor, BackColor, TFlags);
                         TextRenderer.DrawText(g, line, Font, new System.Drawing.Point(-off + period, y), ForeColor, BackColor, TFlags);  // seamless loop
                     }
                     else
                     {
-                        int x = lw > w ? 0 : Math.Max(0, (w - lw) / 2);  // pin overflow left, center short
-                        TextRenderer.DrawText(g, line, Font, new System.Drawing.Point(x, y), ForeColor, BackColor, TFlags);
+                        TextRenderer.DrawText(g, line, Font, new System.Drawing.Point(0, y), ForeColor, BackColor, TFlags);  // left-align
                     }
                 }
             }
