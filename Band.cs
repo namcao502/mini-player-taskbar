@@ -54,6 +54,7 @@ namespace MiniPlayerBand
 
         SessionManager _mgr;
         Session _session;
+        readonly List<Session> _watched = new();  // sessions we've hooked PlaybackInfoChanged on
         int _refreshSeq;      // newest RefreshAsync wins; older async reads are dropped
         bool _inited;         // guard so Init runs once
         string _trackTitle = "No media";                        // real title, restored after the volume readout
@@ -177,8 +178,9 @@ namespace MiniPlayerBand
             try
             {
                 _mgr = await SessionManager.RequestAsync();
-                _mgr.CurrentSessionChanged += (s, e) => UiPost(HookSession);
-                UiPost(HookSession);
+                _mgr.CurrentSessionChanged += (s, e) => UiPost(Resync);
+                _mgr.SessionsChanged += (s, e) => UiPost(Resync);
+                UiPost(Resync);
             }
             catch
             {
@@ -186,29 +188,70 @@ namespace MiniPlayerBand
             }
         }
 
-        // Runs on the UI thread (always called via UiPost).
-        void HookSession()
+        // Re-pick the session that is actually playing and re-hook. UI thread.
+        // We follow the *playing* session, not GetCurrentSession() alone: an ended
+        // browser video (e.g. one attached to a social post) stays "current" with
+        // its title intact, so hard-following it would show that title forever.
+        void Resync()
         {
-            if (_session != null)
+            IReadOnlyList<Session> sessions;
+            try { sessions = _mgr.GetSessions(); }
+            catch { sessions = null; }
+
+            // Watch playback on every session so any of them starting to play
+            // re-triggers a pick. Explorer gives us no polling, and the "current"
+            // session does not switch away on its own when a video just ends.
+            foreach (var w in _watched) w.PlaybackInfoChanged -= OnAnyPlayback;
+            _watched.Clear();
+            if (sessions != null)
+                foreach (var s in sessions)
+                {
+                    s.PlaybackInfoChanged += OnAnyPlayback;
+                    _watched.Add(s);
+                }
+
+            Session target = PickPlaying(sessions);
+            if (!ReferenceEquals(target, _session))
             {
-                _session.MediaPropertiesChanged -= OnMediaProps;
-                _session.TimelinePropertiesChanged -= OnTimeline;
-                _session.PlaybackInfoChanged -= OnPlayback;
+                if (_session != null)
+                {
+                    _session.MediaPropertiesChanged -= OnMediaProps;
+                    _session.TimelinePropertiesChanged -= OnTimeline;
+                }
+                _session = target;
+                if (_session != null)
+                {
+                    _session.MediaPropertiesChanged += OnMediaProps;
+                    _session.TimelinePropertiesChanged += OnTimeline;
+                }
             }
-            _session = _mgr.GetCurrentSession();
-            if (_session != null)
-            {
-                _session.MediaPropertiesChanged += OnMediaProps;
-                _session.TimelinePropertiesChanged += OnTimeline;
-                _session.PlaybackInfoChanged += OnPlayback;
-            }
-            ReadPlayback();  // also reads the timeline
-            _ = RefreshAsync();
+            ReadPlayback();       // updates _playing + timeline for the bar
+            _ = RefreshAsync();   // title, or debounced "No media" when nothing plays
         }
 
+        // The session that is actually Playing (current preferred), else null.
+        Session PickPlaying(IReadOnlyList<Session> sessions)
+        {
+            Session cur = null;
+            try { cur = _mgr.GetCurrentSession(); }
+            catch { }
+            if (IsPlaying(cur)) return cur;
+            if (sessions != null)
+                foreach (var s in sessions)
+                    if (IsPlaying(s)) return s;
+            return null;  // nothing playing -> No media, so an ended video does not linger
+        }
+
+        static bool IsPlaying(Session s)
+        {
+            if (s == null) return false;
+            try { return s.GetPlaybackInfo().PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing; }
+            catch { return false; }
+        }
+
+        void OnAnyPlayback(Session s, PlaybackInfoChangedEventArgs e) => UiPost(Resync);
         void OnMediaProps(Session s, MediaPropertiesChangedEventArgs e) => UiPost(() => { _ = RefreshAsync(); });
         void OnTimeline(Session s, TimelinePropertiesChangedEventArgs e) => UiPost(ReadTimeline);
-        void OnPlayback(Session s, PlaybackInfoChangedEventArgs e) => UiPost(ReadPlayback);
 
         // Snapshot the current position/duration and repaint the bar. UI thread.
         void ReadTimeline()
@@ -264,22 +307,10 @@ namespace MiniPlayerBand
             {
                 MediaProps props = await s.TryGetMediaPropertiesAsync();
                 string title = props.Title ?? "";
-                // Empty title while the session is still alive = the next track is loading
-                // (a browser skip can gap for seconds). Keep the old track shown; only fall
-                // back to "No media" when playback has genuinely ended (Stopped/Closed).
-                if (title.Length == 0)
-                {
-                    bool ended;
-                    try
-                    {
-                        var st = s.GetPlaybackInfo().PlaybackStatus;
-                        ended = st == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped
-                             || st == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Closed;
-                    }
-                    catch { ended = true; }
-                    if (ended) UiPost(() => ScheduleNoMedia(seq));  // else keep the current track (no flash)
-                    return;
-                }
+                // The selected session is playing; an empty title just means its
+                // metadata is still loading (a browser skip can gap for seconds).
+                // Keep the old track shown until the real title arrives, no flash.
+                if (title.Length == 0) return;
                 string artist = props.Artist ?? "";
                 // Two rows: title on top, artist below (newline = second line in MarqueeLabel).
                 string display = artist.Length == 0 ? title : title + "\n" + artist;
