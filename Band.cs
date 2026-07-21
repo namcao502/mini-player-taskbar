@@ -210,7 +210,7 @@ namespace MiniPlayerBand
                     _watched.Add(s);
                 }
 
-            Session target = PickPlaying(sessions);
+            Session target = PickBest(sessions);
             if (!ReferenceEquals(target, _session))
             {
                 if (_session != null)
@@ -229,8 +229,10 @@ namespace MiniPlayerBand
             _ = RefreshAsync();   // title, or debounced "No media" when nothing plays
         }
 
-        // The session that is actually Playing (current preferred), else null.
-        Session PickPlaying(IReadOnlyList<Session> sessions)
+        // The session to show: one that is Playing (current preferred), else the
+        // current session so a paused-mid-track stays visible across lock/unlock.
+        // Whether a non-playing session is a finished item is decided in RefreshAsync.
+        Session PickBest(IReadOnlyList<Session> sessions)
         {
             Session cur = null;
             try { cur = _mgr.GetCurrentSession(); }
@@ -239,13 +241,30 @@ namespace MiniPlayerBand
             if (sessions != null)
                 foreach (var s in sessions)
                     if (IsPlaying(s)) return s;
-            return null;  // nothing playing -> No media, so an ended video does not linger
+            return cur;  // nothing playing: keep the current session (paused track stays visible)
         }
 
         static bool IsPlaying(Session s)
         {
             if (s == null) return false;
             try { return s.GetPlaybackInfo().PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing; }
+            catch { return false; }
+        }
+
+        // A non-playing session that has run to its end (or is stopped/closed) is a
+        // finished item, e.g. a browser video attached to a post -> show No media.
+        // A track paused mid-way (position below the end) is NOT ended, so it stays.
+        static bool HasEnded(Session s)
+        {
+            try
+            {
+                var st = s.GetPlaybackInfo().PlaybackStatus;
+                if (st == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped
+                 || st == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Closed) return true;
+                var t = s.GetTimelineProperties();
+                if (t.EndTime <= t.StartTime) return false;  // no known duration -> can't tell, keep it
+                return t.Position >= t.EndTime - TimeSpan.FromSeconds(1.5);
+            }
             catch { return false; }
         }
 
@@ -303,6 +322,9 @@ namespace MiniPlayerBand
             int seq = ++_refreshSeq;  // only the newest refresh may touch the UI
             var s = _session;
             if (s == null) { UiPost(() => ScheduleNoMedia(seq)); return; }
+            // A paused session that has run to its end (an ended video) falls back to
+            // No media; a track merely paused mid-way stays shown (survives lock/unlock).
+            if (!IsPlaying(s) && HasEnded(s)) { UiPost(() => ScheduleNoMedia(seq)); return; }
             try
             {
                 MediaProps props = await s.TryGetMediaPropertiesAsync();
