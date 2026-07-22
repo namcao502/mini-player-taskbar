@@ -25,6 +25,7 @@ using System.Windows.Forms;
 using CSDeskBand;
 using CSDeskBand.Win;
 using Windows.Foundation;
+using Windows.Media;
 using Windows.Media.Control;
 
 namespace MiniPlayerBand
@@ -65,6 +66,12 @@ namespace MiniPlayerBand
         long _tlStamp;                                             // Stopwatch ticks when the snapshot was taken
         bool _playing;
 
+        // Right-click menu (built once; dynamic bits refreshed on Opening).
+        readonly ContextMenuStrip _menu = new();
+        ToolStripMenuItem _miPrev, _miPlay, _miNext, _miShuffle, _miRepeat, _miMute, _miCopy, _miSource;
+        ToolStripLabel _lblVolume;  // read-only volume readout
+        Session _pinned;  // source picked via right-click > Source; overrides auto-pick until it ends
+
         public Band()
         {
             _bg = TaskbarColor();  // sample the taskbar color first, so children are built with it
@@ -77,7 +84,9 @@ namespace MiniPlayerBand
             _title.BackColor = _bg;
             _title.ForeColor = Fg;
             _title.Font = new Font("Segoe UI", 9f);
-            _title.Text = "No media";
+            // The base ctor already fired OnHandleCreated -> Init, which may have set
+            // the real title before this body runs; don't clobber it with the placeholder.
+            if (string.IsNullOrEmpty(_title.Text)) _title.Text = "No media";
             _title.Cursor = Cursors.Hand;
             _title.MouseClick += OnTitleClick;  // left 1/4 = prev, right 1/4 = next, middle = play/pause
             Controls.Add(_title);
@@ -89,6 +98,7 @@ namespace MiniPlayerBand
             _volTimer.Tick += (s, e) => { _volTimer.Stop(); _title.Text = _trackTitle; };  // restore title
             _clearTimer.Tick += (s, e) => { _clearTimer.Stop(); SetTitle("No media"); };
             _progressTimer.Tick += (s, e) => InvalidateBar();
+            BuildMenu();
         }
 
         // Central title setter: don't overwrite the volume readout while it is showing.
@@ -108,6 +118,116 @@ namespace MiniPlayerBand
             if (e.X < w / 4) _ = RunCommand(x => x.TrySkipPreviousAsync());
             else if (e.X > w * 3 / 4) _ = RunCommand(x => x.TrySkipNextAsync());
             else _ = RunCommand(x => x.TryTogglePlayPauseAsync());
+        }
+
+        // ---- right-click menu ----
+
+        void BuildMenu()
+        {
+            _miPrev = new ToolStripMenuItem("Previous", null, (s, e) => _ = RunCommand(x => x.TrySkipPreviousAsync()));
+            _miPlay = new ToolStripMenuItem("Play / Pause", null, (s, e) => _ = RunCommand(x => x.TryTogglePlayPauseAsync()));
+            _miNext = new ToolStripMenuItem("Next", null, (s, e) => _ = RunCommand(x => x.TrySkipNextAsync()));
+            _miShuffle = new ToolStripMenuItem("Shuffle", null, (s, e) => ToggleShuffle());
+            _miRepeat = new ToolStripMenuItem("Repeat", null, (s, e) => CycleRepeat());
+            _lblVolume = new ToolStripLabel("Volume: --");
+            _miMute = new ToolStripMenuItem("Mute", null, (s, e) => ToggleMute());
+            _miCopy = new ToolStripMenuItem("Copy title", null, (s, e) => CopyTitle());
+            _miSource = new ToolStripMenuItem("Source");
+            _menu.Items.AddRange(new ToolStripItem[]
+            {
+                _miPrev, _miPlay, _miNext, _miShuffle, _miRepeat,
+                new ToolStripSeparator(),
+                _lblVolume, _miMute, _miCopy,
+                new ToolStripSeparator(),
+                _miSource,
+            });
+            _menu.Opening += (s, e) => RefreshMenu();
+            ContextMenuStrip = _menu;         // right-click the band body
+            _title.ContextMenuStrip = _menu;  // and the title
+        }
+
+        // Refresh the dynamic bits just before the menu shows.
+        void RefreshMenu()
+        {
+            _miPlay.Enabled = _session != null;
+            _miMute.Checked = IsMuted();
+            _miCopy.Enabled = _session != null && !string.IsNullOrEmpty(_trackTitle) && _trackTitle != "No media";
+            int v = VolumePercent();
+            _lblVolume.Text = v < 0 ? "Volume: --" : "Volume: " + v + "%";
+
+            // Prev/next/shuffle/repeat: only if the app reports supporting them (Controls flags).
+            GlobalSystemMediaTransportControlsSessionPlaybackInfo info = null;
+            try { info = _session?.GetPlaybackInfo(); } catch { }
+            _miPrev.Enabled = info?.Controls.IsPreviousEnabled == true;
+            _miNext.Enabled = info?.Controls.IsNextEnabled == true;
+            _miShuffle.Enabled = info?.Controls.IsShuffleEnabled == true;
+            _miShuffle.Checked = info?.IsShuffleActive == true;
+            _miRepeat.Enabled = info?.Controls.IsRepeatEnabled == true;
+            _miRepeat.Text = "Repeat: " + RepeatLabel(info?.AutoRepeatMode);
+
+            BuildSourceSubmenu();
+        }
+
+        static string RepeatLabel(MediaPlaybackAutoRepeatMode? m) =>
+            m == MediaPlaybackAutoRepeatMode.Track ? "Track"
+          : m == MediaPlaybackAutoRepeatMode.List ? "List"
+          : "Off";
+
+        void ToggleShuffle()
+        {
+            bool cur = false;
+            try { cur = _session?.GetPlaybackInfo().IsShuffleActive == true; } catch { }
+            _ = RunCommand(x => x.TryChangeShuffleActiveAsync(!cur));
+        }
+
+        // Cycle Off -> Track -> List -> Off.
+        void CycleRepeat()
+        {
+            MediaPlaybackAutoRepeatMode next = MediaPlaybackAutoRepeatMode.None;
+            try
+            {
+                var cur = _session?.GetPlaybackInfo().AutoRepeatMode;
+                next = cur == MediaPlaybackAutoRepeatMode.None ? MediaPlaybackAutoRepeatMode.Track
+                     : cur == MediaPlaybackAutoRepeatMode.Track ? MediaPlaybackAutoRepeatMode.List
+                     : MediaPlaybackAutoRepeatMode.None;
+            }
+            catch { }
+            _ = RunCommand(x => x.TryChangeAutoRepeatModeAsync(next));
+        }
+
+        // Rebuild the Source submenu from the live session list; check on the shown one.
+        void BuildSourceSubmenu()
+        {
+            _miSource.DropDownItems.Clear();
+            IReadOnlyList<Session> sessions = null;
+            try { sessions = _mgr?.GetSessions(); } catch { }
+            if (sessions == null || sessions.Count == 0) { _miSource.Enabled = false; return; }
+            _miSource.Enabled = true;
+            foreach (var s in sessions)
+            {
+                var captured = s;  // don't close over the loop variable
+                _miSource.DropDownItems.Add(new ToolStripMenuItem(SourceName(s), null, (a, b) => PinSource(captured))
+                {
+                    Checked = ReferenceEquals(s, _session),
+                });
+            }
+        }
+
+        static string SourceName(Session s)
+        {
+            try { return string.IsNullOrEmpty(s.SourceAppUserModelId) ? "(unknown)" : s.SourceAppUserModelId; }
+            catch { return "(unknown)"; }
+        }
+
+        // Pin a source so the band follows it until it ends (then auto-follow resumes).
+        void PinSource(Session s) { _pinned = s; Resync(); }
+
+        // Copy the current track to the clipboard (the two rows joined with " - ").
+        void CopyTitle()
+        {
+            string t = _trackTitle;
+            if (string.IsNullOrEmpty(t) || t == "No media") return;
+            try { Clipboard.SetText(t.Replace("\n", " - ")); } catch { }
         }
 
         // The base ctor creates the handle before a HandleCreated subscription
@@ -222,6 +342,12 @@ namespace MiniPlayerBand
         // Whether a non-playing session is a finished item is decided in RefreshAsync.
         Session PickBest(IReadOnlyList<Session> sessions)
         {
+            // Honor a user pin (right-click > Source) until that source ends or vanishes.
+            if (_pinned != null)
+            {
+                if (sessions != null && Contains(sessions, _pinned) && !HasEnded(_pinned)) return _pinned;
+                _pinned = null;  // ponytail: pin auto-clears when its source ends; no manual "unpin" item
+            }
             Session cur = null;
             try { cur = _mgr.GetCurrentSession(); }
             catch { }
@@ -230,6 +356,12 @@ namespace MiniPlayerBand
                 foreach (var s in sessions)
                     if (IsPlaying(s)) return s;
             return cur;  // nothing playing: keep the current session (paused track stays visible)
+        }
+
+        static bool Contains(IReadOnlyList<Session> list, Session s)
+        {
+            foreach (var x in list) if (ReferenceEquals(x, s)) return true;
+            return false;
         }
 
         static bool IsPlaying(Session s)
@@ -429,16 +561,22 @@ namespace MiniPlayerBand
             _volTimer.Start();  // restart the restore countdown on each notch
         }
 
+        // Default render endpoint's volume control; caller releases via Marshal.ReleaseComObject.
+        static IAudioEndpointVolume GetVolume()
+        {
+            var en = (IMMDeviceEnumerator)new MMDeviceEnumerator();
+            if (en.GetDefaultAudioEndpoint(0 /*eRender*/, 0 /*eConsole*/, out var dev) != 0 || dev == null) return null;
+            var iid = typeof(IAudioEndpointVolume).GUID;
+            if (dev.Activate(ref iid, 1 /*CLSCTX_INPROC_SERVER*/, IntPtr.Zero, out var o) != 0 || o == null) return null;
+            return (IAudioEndpointVolume)o;
+        }
+
         static int AdjustVolume(float delta)
         {
-            IAudioEndpointVolume vol = null;
+            var vol = GetVolume();
+            if (vol == null) return -1;
             try
             {
-                var en = (IMMDeviceEnumerator)new MMDeviceEnumerator();
-                if (en.GetDefaultAudioEndpoint(0 /*eRender*/, 0 /*eConsole*/, out var dev) != 0 || dev == null) return -1;
-                var iid = typeof(IAudioEndpointVolume).GUID;
-                if (dev.Activate(ref iid, 1 /*CLSCTX_INPROC_SERVER*/, IntPtr.Zero, out var o) != 0 || o == null) return -1;
-                vol = (IAudioEndpointVolume)o;
                 if (vol.GetMasterVolumeLevelScalar(out float cur) != 0) return -1;
                 float next = Math.Max(0f, Math.Min(1f, cur + delta));
                 var ctx = Guid.Empty;
@@ -446,12 +584,47 @@ namespace MiniPlayerBand
                 return (int)Math.Round(next * 100);
             }
             catch { return -1; }
-            finally { if (vol != null) Marshal.ReleaseComObject(vol); }
+            finally { Marshal.ReleaseComObject(vol); }
+        }
+
+        // Flip the master mute; returns the new state, or null on failure.
+        static bool? ToggleMute()
+        {
+            var vol = GetVolume();
+            if (vol == null) return null;
+            try
+            {
+                if (vol.GetMute(out bool cur) != 0) return null;
+                var ctx = Guid.Empty;
+                vol.SetMute(!cur, ref ctx);
+                return !cur;
+            }
+            catch { return null; }
+            finally { Marshal.ReleaseComObject(vol); }
+        }
+
+        static bool IsMuted()
+        {
+            var vol = GetVolume();
+            if (vol == null) return false;
+            try { return vol.GetMute(out bool cur) == 0 && cur; }
+            catch { return false; }
+            finally { Marshal.ReleaseComObject(vol); }
+        }
+
+        // Current master volume 0..100, or -1 on failure.
+        static int VolumePercent()
+        {
+            var vol = GetVolume();
+            if (vol == null) return -1;
+            try { return vol.GetMasterVolumeLevelScalar(out float cur) == 0 ? (int)Math.Round(cur * 100) : -1; }
+            catch { return -1; }
+            finally { Marshal.ReleaseComObject(vol); }
         }
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { _volTimer?.Dispose(); _clearTimer?.Dispose(); _progressTimer?.Dispose(); }
+            if (disposing) { _volTimer?.Dispose(); _clearTimer?.Dispose(); _progressTimer?.Dispose(); _menu?.Dispose(); }
             base.Dispose(disposing);
         }
     }
@@ -605,5 +778,11 @@ namespace MiniPlayerBand
         [PreserveSig] int SetMasterVolumeLevelScalar(float level, ref Guid ctx);
         [PreserveSig] int _GetMasterVolumeLevel();
         [PreserveSig] int GetMasterVolumeLevelScalar(out float level);
+        [PreserveSig] int _SetChannelVolumeLevel();        // slot placeholders (order matters)
+        [PreserveSig] int _SetChannelVolumeLevelScalar();
+        [PreserveSig] int _GetChannelVolumeLevel();
+        [PreserveSig] int _GetChannelVolumeLevelScalar();
+        [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid ctx);
+        [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
     }
 }
