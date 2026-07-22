@@ -38,19 +38,15 @@ namespace MiniPlayerBand
     [CSDeskBandRegistration(Name = "Mini Player", ShowDeskBand = true)]
     public class Band : CSDeskBandWin
     {
-        // Segoe MDL2 Assets glyphs.
-        const string GlyphPrev = "\uE892";
-        const string GlyphNext = "\uE893";
-
         static readonly Color Fg = Color.FromArgb(240, 240, 240);
+        static readonly Color FgDim = Color.FromArgb(120, 120, 120);  // title color while paused
+        bool _titlePaused = true;  // last applied look, so we only repaint on change
         Color _bg = Color.FromArgb(32, 32, 32);  // taskbar color; sampled from the real taskbar at startup
 
         internal static Color Lighten(Color c, int d) =>
             Color.FromArgb(Math.Min(255, c.R + d), Math.Min(255, c.G + d), Math.Min(255, c.B + d));
 
         readonly MarqueeLabel _title = new();
-        readonly IconButton _prev;
-        readonly IconButton _next;
 
         SessionManager _mgr;
         Session _session;
@@ -63,6 +59,7 @@ namespace MiniPlayerBand
 
         // Progress bar: last timeline snapshot + interpolation while playing.
         const int BarH = 2;                                        // progress bar height, px
+        const int SeekH = 8;                                       // bottom strip reserved as the click-to-seek target
         readonly Timer _progressTimer = new() { Interval = 1000 }; // advances the bar between SMTC timeline events
         TimeSpan _tlStart, _tlEnd, _tlPos;                         // last timeline snapshot
         long _tlStamp;                                             // Stopwatch ticks when the snapshot was taken
@@ -82,17 +79,13 @@ namespace MiniPlayerBand
             _title.Font = new Font("Segoe UI", 9f);
             _title.Text = "No media";
             _title.Cursor = Cursors.Hand;
-            _title.Click += async (s, e) => await RunCommand(x => x.TryTogglePlayPauseAsync());  // click title toggles too
+            _title.MouseClick += OnTitleClick;  // left 1/4 = prev, right 1/4 = next, middle = play/pause
             Controls.Add(_title);
 
-            _prev = MakeButton(GlyphPrev, x => x.TrySkipPreviousAsync());
-            _next = MakeButton(GlyphNext, x => x.TrySkipNextAsync());
-            Controls.Add(_prev);
-            Controls.Add(_next);
-
             // Wheel over any part of the band adjusts volume.
-            foreach (Control c in new Control[] { this, _title, _prev, _next })
+            foreach (Control c in new Control[] { this, _title })
                 c.MouseWheel += OnWheel;
+            MouseDown += OnSeek;  // clicks land on the band only in the uncovered bottom strip
             _volTimer.Tick += (s, e) => { _volTimer.Stop(); _title.Text = _trackTitle; };  // restore title
             _clearTimer.Tick += (s, e) => { _clearTimer.Stop(); SetTitle("No media"); };
             _progressTimer.Tick += (s, e) => InvalidateBar();
@@ -105,11 +98,16 @@ namespace MiniPlayerBand
             if (!_volTimer.Enabled) _title.Text = text;
         }
 
-        IconButton MakeButton(string glyph, Func<Session, IAsyncOperation<bool>> op)
+        // Invisible click zones across the title: left quarter skips back, right
+        // quarter skips forward, the middle half toggles play/pause.
+        void OnTitleClick(object sender, MouseEventArgs e)
         {
-            var b = new IconButton(glyph) { BackColor = _bg, ForeColor = Fg };
-            b.Clicked += async () => await RunCommand(op);
-            return b;
+            if (e.Button != MouseButtons.Left) return;
+            int w = _title.Width;
+            if (w <= 0) return;
+            if (e.X < w / 4) _ = RunCommand(x => x.TrySkipPreviousAsync());
+            else if (e.X > w * 3 / 4) _ = RunCommand(x => x.TrySkipNextAsync());
+            else _ = RunCommand(x => x.TryTogglePlayPauseAsync());
         }
 
         // The base ctor creates the handle before a HandleCreated subscription
@@ -148,27 +146,17 @@ namespace MiniPlayerBand
             if (IsHandleCreated) Invalidate(new Rectangle(0, ClientSize.Height - BarH, ClientSize.Width, BarH));
         }
 
-        // Height-adaptive: prev button pinned left, next button pinned right, the
-        // scrolling title fills the middle. Buttons vertically centered, never clipped.
+        // Height-adaptive: the scrolling title fills the full width; the bottom
+        // strip is left for the progress bar + its click-to-seek target.
         protected override void OnLayout(LayoutEventArgs e)
         {
             base.OnLayout(e);
-            if (_title == null || _prev == null || _next == null) return;
+            if (_title == null) return;
             int h = ClientSize.Height, w = ClientSize.Width;
             if (h <= 0 || w <= 0) return;
 
             const int pad = 2;
-            int usableH = h - BarH;                            // leave the bottom strip for the progress bar
-            int bw = Math.Min(34, Math.Max(22, w / 12));       // button width
-            int bh = Math.Min(usableH - pad * 2, 32);          // button height (capped)
-            int by = (usableH - bh) / 2;                       // vertically centered above the bar
-
-            _prev.SetBounds(pad, by, bw, bh);
-            int nextX = w - pad - bw;
-            _next.SetBounds(nextX, by, bw, bh);
-
-            int titleX = pad + bw + 4;
-            _title.SetBounds(titleX, 0, Math.Max(0, nextX - titleX - 4), usableH);
+            _title.SetBounds(pad, 0, Math.Max(0, w - pad * 2), h - SeekH);
         }
 
         // ---- SMTC wiring (events, no polling) ----
@@ -289,12 +277,30 @@ namespace MiniPlayerBand
             InvalidateBar();
         }
 
+        // Left-click in the bottom strip seeks to that fraction of the duration.
+        void OnSeek(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left || e.Y < ClientSize.Height - SeekH) return;
+            TimeSpan dur = _tlEnd - _tlStart;
+            if (dur <= TimeSpan.Zero || ClientSize.Width <= 0) return;  // nothing seekable
+            double f = e.X / (double)ClientSize.Width;
+            f = f < 0 ? 0 : f > 1 ? 1 : f;
+            long ticks = _tlStart.Ticks + (long)(dur.Ticks * f);
+            _ = RunCommand(s => s.TryChangePlaybackPositionAsync(ticks));  // app repaints via TimelinePropertiesChanged
+        }
+
         // Read play/pause state, then re-anchor the timeline from source of truth. UI thread.
         void ReadPlayback()
         {
             var s = _session;
             try { _playing = s != null && s.GetPlaybackInfo().PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing; }
             catch { _playing = false; }
+            if (_playing == _titlePaused)  // play state changed -> dim/brighten the title
+            {
+                _titlePaused = !_playing;
+                _title.ForeColor = _playing ? Fg : FgDim;
+                _title.Refresh();  // force an immediate repaint (WM_PAINT is starved in Explorer)
+            }
             ReadTimeline();
         }
 
@@ -568,46 +574,6 @@ namespace MiniPlayerBand
         {
             if (disposing) { _timer.Dispose(); _buffer?.Dispose(); }
             base.Dispose(disposing);
-        }
-    }
-
-    // Flat, owner-drawn icon button so the glyph is exactly centered (the stock
-    // Button centered the glyph's text box, not its ink, and looked off).
-    sealed class IconButton : Control
-    {
-        string _glyph;
-        bool _over, _down;
-        public event Action Clicked;
-
-        public IconButton(string glyph)
-        {
-            _glyph = glyph;
-            Font = new Font("Segoe MDL2 Assets", 11f);
-            Cursor = Cursors.Hand;
-            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint
-                   | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-        }
-
-        public string Glyph { get => _glyph; set { _glyph = value; Invalidate(); } }
-
-        protected override void OnMouseEnter(EventArgs e) { _over = true; Invalidate(); base.OnMouseEnter(e); }
-        protected override void OnMouseLeave(EventArgs e) { _over = false; _down = false; Invalidate(); base.OnMouseLeave(e); }
-        protected override void OnMouseDown(MouseEventArgs e) { if (e.Button == MouseButtons.Left) { _down = true; Invalidate(); } base.OnMouseDown(e); }
-        protected override void OnMouseUp(MouseEventArgs e)
-        {
-            bool click = _down && e.Button == MouseButtons.Left && ClientRectangle.Contains(e.Location);
-            _down = false; Invalidate();
-            base.OnMouseUp(e);
-            if (click) Clicked?.Invoke();
-        }
-
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            var g = e.Graphics;
-            Color bg = _down ? Band.Lighten(BackColor, 40) : _over ? Band.Lighten(BackColor, 24) : BackColor;  // hover/press highlight
-            g.Clear(bg);
-            TextRenderer.DrawText(g, _glyph, Font, ClientRectangle, ForeColor, bg,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
         }
     }
 
