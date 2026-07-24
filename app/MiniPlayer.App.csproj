@@ -1,21 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net48</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <LangVersion>latest</LangVersion>
-    <AssemblyName>MiniPlayerBand</AssemblyName>
+    <AssemblyName>MiniPlayer</AssemblyName>
     <RootNamespace>MiniPlayerBand</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <!-- the standalone Win11 app lives under app/; keep its sources out of the DLL -->
-    <Compile Remove="app\**" />
-  </ItemGroup>
-  <ItemGroup>
     <!-- lets dotnet build net48 without Visual Studio installed -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
-    <!-- deskband (IDeskBand2 COM plumbing) WinForms host -->
-    <PackageReference Include="CSDeskBand.Win" Version="2.1.0" />
     <!-- WinRT SMTC projections (Windows.Media.Control) on .NET Framework -->
     <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.19041.1" />
+    <!-- shared player UI + SMTC logic; no CSDeskBand dependency -->
+    <Compile Include="..\PlayerControl.cs" Link="PlayerControl.cs" />
   </ItemGroup>
 </Project>
