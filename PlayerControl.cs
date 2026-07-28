@@ -4,7 +4,7 @@
 // rows) with invisible click-zones (left 1/4 prev, right 1/4 next, middle
 // play/pause), a bottom progress+seek strip, wheel-to-volume, and a right-click
 // menu. Event-driven, no polling. Contains no host coupling: the Win10 deskband
-// (Band.cs) and the Win11 standalone app (app/AppBarForm.cs) both just add one of
+// (Band.cs) and the Win11 standalone app (app/FloatingForm.cs) both just add one of
 // these docked-fill.
 //
 // Threading: hosts may run with no WinForms SynchronizationContext (Explorer does),

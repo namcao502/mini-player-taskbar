@@ -2,7 +2,7 @@
 //
 // A COM shell extension (CSDeskBand does the IDeskBand2 plumbing) that docks
 // inside the Win10 taskbar and hosts a PlayerControl (all the actual UI + SMTC
-// logic lives there, shared with the Win11 standalone app in app/AppBarForm.cs).
+// logic lives there, shared with the Win11 standalone app in app/FloatingForm.cs).
 //
 // Deprecated tech: deskbands work on Windows 10, but were removed in Windows 11.
 // Build:     dotnet build -c Release
