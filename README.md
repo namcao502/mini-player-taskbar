@@ -11,6 +11,16 @@ Scroll the mouse wheel over the band to change system volume.
 > **Windows 10 only.** Deskbands (third-party taskbar toolbars) were **removed
 > in Windows 11**, so the DLL will not load there.
 
+## Other platforms
+
+Same idea, different host:
+
+- **Windows 11:** a borderless floating-window version lives in [`app/`](app/)
+  (deskbands do not load on Win11). Shares the SMTC/UI logic in `PlayerControl.cs`.
+- **Linux / KDE Plasma 6** (Fedora Kinoite and other Plasma 6 distros): a panel
+  widget lives in [`plasmoid/`](plasmoid/), built on MPRIS2 instead of SMTC. See
+  [plasmoid/README.md](plasmoid/README.md).
+
 ## Features
 
 - Prev / next buttons with the track title + artist on two scrolling rows

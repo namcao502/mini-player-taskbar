@@ -1,0 +1,19 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Id": "io.github.miniplayer",
+        "Name": "Mini Player",
+        "Description": "Compact MPRIS media controller for the panel: title, artist, transport, seek and volume.",
+        "Icon": "multimedia-player",
+        "Category": "Multimedia",
+        "License": "MIT",
+        "Version": "0.1",
+        "EnabledByDefault": true,
+        "Authors": [
+            {
+                "Name": "Nam Nguyen"
+            }
+        ]
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
