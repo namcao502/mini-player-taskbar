@@ -13,13 +13,8 @@ Scroll the mouse wheel over the band to change system volume.
 
 ## Other platforms
 
-Same idea, different host:
-
-- **Windows 11:** a borderless floating-window version lives in [`app/`](app/)
-  (deskbands do not load on Win11). Shares the SMTC/UI logic in `PlayerControl.cs`.
-- **Linux / KDE Plasma 6** (Fedora Kinoite and other Plasma 6 distros): a panel
-  widget lives in [`plasmoid/`](plasmoid/), built on MPRIS2 instead of SMTC. See
-  [plasmoid/README.md](plasmoid/README.md).
+**Windows 11:** a borderless floating-window version lives in [`app/`](app/)
+(deskbands do not load on Win11). Shares the SMTC/UI logic in `PlayerControl.cs`.
 
 ## Features
 
