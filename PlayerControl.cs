@@ -61,7 +61,10 @@ namespace MiniPlayerBand
 
         // Right-click menu (built once; dynamic bits refreshed on Opening).
         readonly ContextMenuStrip _menu = new();
-        ToolStripMenuItem _miPrev, _miPlay, _miNext, _miStop, _miCopy;
+        ToolStripMenuItem _miPrev, _miPlay, _miNext, _miStop, _miCopy, _miAbout;
+
+        // Optional host-specific usage line appended to the About dialog (e.g. Alt+drag).
+        public string HostNote { get; set; }
 
         public PlayerControl()
         {
@@ -122,11 +125,15 @@ namespace MiniPlayerBand
             _miCopy.DropDownItems.Add(new ToolStripMenuItem("Title only", null, (s, e) => Copy(TitlePart())));
             _miCopy.DropDownItems.Add(new ToolStripMenuItem("Artist only", null, (s, e) => Copy(ArtistPart())));
 
+            _miAbout = new ToolStripMenuItem("About / How to use", null, (s, e) => ShowAbout());
+
             _menu.Items.AddRange(new ToolStripItem[]
             {
                 _miPrev, _miPlay, _miNext, _miStop,
                 new ToolStripSeparator(),
                 _miCopy,
+                new ToolStripSeparator(),
+                _miAbout,
             });
             _menu.Opening += (s, e) => RefreshMenu();
             ContextMenuStrip = _menu;         // right-click the band body
@@ -175,6 +182,26 @@ namespace MiniPlayerBand
         {
             if (string.IsNullOrEmpty(text)) return;
             try { Clipboard.SetText(text); } catch { }
+        }
+
+        // About + a how-to-use cheat sheet, since every control is an unlabeled gesture.
+        void ShowAbout()
+        {
+            var v = typeof(PlayerControl).Assembly.GetName().Version;
+            string text =
+                "Mini Player " + v + "\r\n" +
+                "A tiny media player for the Windows taskbar. It follows whatever app is\r\n" +
+                "currently playing (browser, Spotify, etc.) via Windows SMTC.\r\n" +
+                "\r\n" +
+                "How to use:\r\n" +
+                "   - Click the title:   left = previous,   middle = play / pause,   right = next\r\n" +
+                "   - Mouse wheel over it:   change system volume\r\n" +
+                "   - Middle-click:   mute / unmute\r\n" +
+                "   - Click the bottom edge:   seek within the track\r\n" +
+                "   - Right-click:   this menu (transport, copy title / artist)";
+            if (!string.IsNullOrEmpty(HostNote))
+                text += "\r\n   - " + HostNote;
+            MessageBox.Show(text, "Mini Player", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         // A bare UserControl doesn't create its handle in the ctor, so SMTC is started

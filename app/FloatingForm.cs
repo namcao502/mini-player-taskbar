@@ -43,6 +43,7 @@ namespace MiniPlayerBand
             _player = new PlayerControl { Dock = DockStyle.Fill };
             Controls.Add(_player);
             AddMenuItems();
+            _player.HostNote = "Alt+drag anywhere:   move the window";
         }
 
         // Restore the last saved position if it's still on a visible screen; else
