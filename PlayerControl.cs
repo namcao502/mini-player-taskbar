@@ -486,15 +486,17 @@ namespace MiniPlayerBand
         // ---- taskbar color sampling ----
 
         [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern IntPtr FindWindow(string cls, string win);
-        [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr hwnd);
-        [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
         [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT r);
-        [DllImport("gdi32.dll")] static extern uint GetPixel(IntPtr dc, int x, int y);
         struct RECT { public int Left, Top, Right, Bottom; }
 
-        // Sample the taskbar background: the most common pixel color along its
-        // middle row. Falls back to a dark gray if anything looks off. Internal so
-        // the deskband host can paint its own BackColor to match (no gray sliver).
+        // Sample the taskbar background: the most common pixel color along its middle
+        // row. Falls back to a dark gray if anything looks off. Internal so the deskband
+        // host can paint its own BackColor to match (no gray sliver).
+        //
+        // The row is copied into a memory bitmap in one blit and sampled from there.
+        // Per-pixel GetPixel on the live screen DC is very slow under DWM (~ms each), so
+        // scanning the full taskbar width that way cost ~4s per call -- and it runs twice
+        // at startup (Band + PlayerControl) => ~8s to appear. CopyFromScreen is one blit.
         internal static Color TaskbarColor()
         {
             Color fallback = Color.FromArgb(0, 0, 0);  // dark taskbars are near-black
@@ -502,24 +504,25 @@ namespace MiniPlayerBand
             {
                 var tray = FindWindow("Shell_TrayWnd", null);
                 if (tray == IntPtr.Zero || !GetWindowRect(tray, out var r)) return fallback;
-                var dc = GetDC(IntPtr.Zero);  // screen DC = final composited pixels (acrylic/blur included)
-                if (dc == IntPtr.Zero) return fallback;
-                try
+                int w = r.Right - r.Left, h = r.Bottom - r.Top;
+                if (w <= 0 || h <= 0) return fallback;
+
+                using (var bmp = new Bitmap(w, 1))
                 {
-                    var counts = new Dictionary<uint, int>();
-                    int y = (r.Top + r.Bottom) / 2;
-                    for (int x = r.Left + 4; x < r.Right - 4; x += 8)
+                    using (var g = Graphics.FromImage(bmp))  // final composited pixels (acrylic/blur included)
+                        g.CopyFromScreen(r.Left, r.Top + h / 2, 0, 0, new System.Drawing.Size(w, 1));
+
+                    var counts = new Dictionary<int, int>();
+                    for (int x = 4; x < w - 4; x += 8)
                     {
-                        uint px = GetPixel(dc, x, y);
-                        if (px == 0xFFFFFFFF) continue;  // CLR_INVALID
+                        int px = bmp.GetPixel(x, 0).ToArgb();
                         counts[px] = counts.TryGetValue(px, out var c) ? c + 1 : 1;
                     }
                     if (counts.Count == 0) return fallback;
-                    uint mode = 0; int best = -1;
+                    int mode = 0, best = -1;
                     foreach (var kv in counts) if (kv.Value > best) { best = kv.Value; mode = kv.Key; }
-                    return Color.FromArgb((int)(mode & 0xFF), (int)((mode >> 8) & 0xFF), (int)((mode >> 16) & 0xFF));
+                    return Color.FromArgb(mode);
                 }
-                finally { ReleaseDC(IntPtr.Zero, dc); }
             }
             catch { return fallback; }
         }
