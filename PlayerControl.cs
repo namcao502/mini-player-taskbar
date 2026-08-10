@@ -44,7 +44,7 @@ namespace MiniPlayerBand
         readonly List<Session> _watched = new();  // sessions we've hooked PlaybackInfoChanged on
         int _refreshSeq;      // newest RefreshAsync wins; older async reads are dropped
         bool _inited;         // guard so Init runs once
-        string _trackTitle = "No media";                        // real title, restored after the volume readout
+        string _trackTitle = "";                                // real title, or "" = no media (shown as Loc.S.NoMedia)
         readonly Timer _volTimer = new() { Interval = 1200 };   // how long the volume number stays
         readonly Timer _clearTimer = new() { Interval = 800 };  // debounce before falling back to "No media"
 
@@ -61,10 +61,14 @@ namespace MiniPlayerBand
 
         // Right-click menu (built once; dynamic bits refreshed on Opening).
         readonly ContextMenuStrip _menu = new();
-        ToolStripMenuItem _miPrev, _miPlay, _miNext, _miStop, _miCopy, _miAbout;
+        ToolStripMenuItem _miPrev, _miPlay, _miNext, _miStop, _miCopy, _miAbout, _miLang;
+        ToolStripMenuItem _miCopyTitleArtist, _miCopyTitle, _miCopyArtist, _miLangEn, _miLangVi;
 
         // Optional host-specific usage line appended to the About dialog (e.g. Alt+drag).
         public string HostNote { get; set; }
+
+        // Raised after the UI language changes so hosts can relabel their own items.
+        public event Action LanguageChanged;
 
         public PlayerControl()
         {
@@ -74,7 +78,7 @@ namespace MiniPlayerBand
             _title.BackColor = _bg;
             _title.ForeColor = Fg;
             _title.Font = new Font("Segoe UI", 9f);
-            if (string.IsNullOrEmpty(_title.Text)) _title.Text = "No media";
+            _title.Text = DisplayTitle();
             _title.Cursor = Cursors.Hand;
             _title.MouseClick += OnTitleClick;  // left 1/4 = prev, right 1/4 = next, middle = play/pause
             Controls.Add(_title);
@@ -84,19 +88,24 @@ namespace MiniPlayerBand
                 c.MouseWheel += OnWheel;
             MouseDown += OnSeek;  // clicks land on the band only in the uncovered bottom strip
             MouseClick += (s, e) => { if (e.Button == MouseButtons.Middle) ToggleMute(); };  // middle-click band body = mute
-            _volTimer.Tick += (s, e) => { _volTimer.Stop(); _title.Text = _trackTitle; };  // restore title
-            _clearTimer.Tick += (s, e) => { _clearTimer.Stop(); SetTitle("No media"); };
+            _volTimer.Tick += (s, e) => { _volTimer.Stop(); _title.Text = DisplayTitle(); };  // restore title
+            _clearTimer.Tick += (s, e) => { _clearTimer.Stop(); SetTitle(""); };
             _progressTimer.Tick += (s, e) => InvalidateBar();
             _settleTimer.Tick += (s, e) => SettleTimeline();
             BuildMenu();
         }
 
         // Central title setter: don't overwrite the volume readout while it is showing.
+        // _trackTitle stores the real title (or "" for no media); the placeholder word
+        // is localized only at display time so a language switch can't desync the sentinel.
         void SetTitle(string text)
         {
-            _trackTitle = text;
-            if (!_volTimer.Enabled) _title.Text = text;
+            _trackTitle = text ?? "";
+            if (!_volTimer.Enabled) _title.Text = DisplayTitle();
         }
+
+        // What the title area should read for the current state + language.
+        string DisplayTitle() => _trackTitle.Length == 0 ? Loc.S.NoMedia : _trackTitle;
 
         // Invisible click zones across the title: left quarter = previous, right quarter
         // = next, middle half = play/pause. Middle mouse button = mute.
@@ -115,23 +124,33 @@ namespace MiniPlayerBand
 
         void BuildMenu()
         {
-            _miPrev = new ToolStripMenuItem("Previous", null, (s, e) => _ = RunCommand(x => x.TrySkipPreviousAsync()));
-            _miPlay = new ToolStripMenuItem("Play / Pause", null, (s, e) => _ = RunCommand(x => x.TryTogglePlayPauseAsync()));
-            _miNext = new ToolStripMenuItem("Next", null, (s, e) => _ = RunCommand(x => x.TrySkipNextAsync()));
-            _miStop = new ToolStripMenuItem("Stop", null, (s, e) => _ = RunCommand(x => x.TryStopAsync()));
+            _miPrev = new ToolStripMenuItem(Loc.S.Previous, null, (s, e) => _ = RunCommand(x => x.TrySkipPreviousAsync()));
+            _miPlay = new ToolStripMenuItem(Loc.S.PlayPause, null, (s, e) => _ = RunCommand(x => x.TryTogglePlayPauseAsync()));
+            _miNext = new ToolStripMenuItem(Loc.S.Next, null, (s, e) => _ = RunCommand(x => x.TrySkipNextAsync()));
+            _miStop = new ToolStripMenuItem(Loc.S.Stop, null, (s, e) => _ = RunCommand(x => x.TryStopAsync()));
 
-            _miCopy = new ToolStripMenuItem("Copy");
-            _miCopy.DropDownItems.Add(new ToolStripMenuItem("Title and artist", null, (s, e) => Copy(JoinedTitle())));
-            _miCopy.DropDownItems.Add(new ToolStripMenuItem("Title only", null, (s, e) => Copy(TitlePart())));
-            _miCopy.DropDownItems.Add(new ToolStripMenuItem("Artist only", null, (s, e) => Copy(ArtistPart())));
+            _miCopyTitleArtist = new ToolStripMenuItem(Loc.S.TitleAndArtist, null, (s, e) => Copy(JoinedTitle()));
+            _miCopyTitle = new ToolStripMenuItem(Loc.S.TitleOnly, null, (s, e) => Copy(TitlePart()));
+            _miCopyArtist = new ToolStripMenuItem(Loc.S.ArtistOnly, null, (s, e) => Copy(ArtistPart()));
+            _miCopy = new ToolStripMenuItem(Loc.S.Copy);
+            _miCopy.DropDownItems.AddRange(new ToolStripItem[] { _miCopyTitleArtist, _miCopyTitle, _miCopyArtist });
 
-            _miAbout = new ToolStripMenuItem("About / How to use", null, (s, e) => ShowAbout());
+            _miLangEn = new ToolStripMenuItem(Loc.EnglishName, null, (s, e) => SetLanguage(Lang.En));
+            _miLangVi = new ToolStripMenuItem(Loc.VietnameseName, null, (s, e) => SetLanguage(Lang.Vi));
+            _miLang = new ToolStripMenuItem(Loc.S.Language);
+            _miLang.DropDownItems.AddRange(new ToolStripItem[] { _miLangEn, _miLangVi });
+            _miLangEn.Checked = Loc.Current == Lang.En;
+            _miLangVi.Checked = Loc.Current == Lang.Vi;
+
+            _miAbout = new ToolStripMenuItem(Loc.S.About, null, (s, e) => ShowAbout());
 
             _menu.Items.AddRange(new ToolStripItem[]
             {
                 _miPrev, _miPlay, _miNext, _miStop,
                 new ToolStripSeparator(),
                 _miCopy,
+                new ToolStripSeparator(),
+                _miLang,
                 new ToolStripSeparator(),
                 _miAbout,
             });
@@ -140,12 +159,41 @@ namespace MiniPlayerBand
             _title.ContextMenuStrip = _menu;  // and the title
         }
 
+        // Switch language: persist the choice, relabel everything, notify hosts.
+        void SetLanguage(Lang lang)
+        {
+            if (Loc.Current == lang) return;
+            Loc.Current = lang;  // persists to %AppData%\MiniPlayer\lang.txt
+            ApplyLanguage();
+        }
+
+        // Re-label every owned menu item for the current language and refresh the
+        // shown title, then let hosts relabel their own items.
+        void ApplyLanguage()
+        {
+            _miPrev.Text = Loc.S.Previous;
+            _miPlay.Text = Loc.S.PlayPause;
+            _miNext.Text = Loc.S.Next;
+            _miStop.Text = Loc.S.Stop;
+            _miCopy.Text = Loc.S.Copy;
+            _miCopyTitleArtist.Text = Loc.S.TitleAndArtist;
+            _miCopyTitle.Text = Loc.S.TitleOnly;
+            _miCopyArtist.Text = Loc.S.ArtistOnly;
+            _miLang.Text = Loc.S.Language;
+            _miLangEn.Checked = Loc.Current == Lang.En;
+            _miLangVi.Checked = Loc.Current == Lang.Vi;
+            _miAbout.Text = Loc.S.About;
+
+            if (!_volTimer.Enabled) _title.Text = DisplayTitle();  // refresh a shown "no media"
+            LanguageChanged?.Invoke();
+        }
+
         // Refresh the dynamic bits just before the menu shows: enable transport only for
         // what the app reports supporting, and Copy only when there is a real title.
         void RefreshMenu()
         {
             _miPlay.Enabled = _session != null;
-            _miCopy.Enabled = _session != null && !string.IsNullOrEmpty(_trackTitle) && _trackTitle != "No media";
+            _miCopy.Enabled = _session != null && _trackTitle.Length != 0;
 
             GlobalSystemMediaTransportControlsSessionPlaybackInfo info = null;
             try { info = _session?.GetPlaybackInfo(); } catch { }
@@ -154,11 +202,11 @@ namespace MiniPlayerBand
             _miStop.Enabled = info?.Controls.IsStopEnabled == true;
         }
 
-        // Copy helpers. _trackTitle holds "title" or "title\nartist" (empty/"No media" = nothing).
+        // Copy helpers. _trackTitle holds "title" or "title\nartist" ("" = no media).
         string TitlePart()
         {
             string t = _trackTitle;
-            if (string.IsNullOrEmpty(t) || t == "No media") return null;
+            if (t.Length == 0) return null;
             int nl = t.IndexOf('\n');
             return nl < 0 ? t : t.Substring(0, nl);
         }
@@ -166,7 +214,7 @@ namespace MiniPlayerBand
         string ArtistPart()
         {
             string t = _trackTitle;
-            if (string.IsNullOrEmpty(t) || t == "No media") return null;
+            if (t.Length == 0) return null;
             int nl = t.IndexOf('\n');
             return nl < 0 ? null : t.Substring(nl + 1);
         }
@@ -174,7 +222,7 @@ namespace MiniPlayerBand
         string JoinedTitle()
         {
             string t = _trackTitle;
-            if (string.IsNullOrEmpty(t) || t == "No media") return null;
+            if (t.Length == 0) return null;
             return t.Replace("\n", " - ");
         }
 
@@ -185,23 +233,13 @@ namespace MiniPlayerBand
         }
 
         // About + a how-to-use cheat sheet, since every control is an unlabeled gesture.
+        // A custom dialog draws a mock of the band with the zones labeled (a MessageBox
+        // can only describe the gestures in words).
         void ShowAbout()
         {
             var v = typeof(PlayerControl).Assembly.GetName().Version;
-            string text =
-                "Mini Player " + v + "\r\n" +
-                "A tiny media player for the Windows taskbar. It follows whatever app is\r\n" +
-                "currently playing (browser, Spotify, etc.) via Windows SMTC.\r\n" +
-                "\r\n" +
-                "How to use:\r\n" +
-                "   - Click the title:   left = previous,   middle = play / pause,   right = next\r\n" +
-                "   - Mouse wheel over it:   change system volume\r\n" +
-                "   - Middle-click:   mute / unmute\r\n" +
-                "   - Click the bottom edge:   seek within the track\r\n" +
-                "   - Right-click:   this menu (transport, copy title / artist)";
-            if (!string.IsNullOrEmpty(HostNote))
-                text += "\r\n   - " + HostNote;
-            MessageBox.Show(text, "Mini Player", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            using (var dlg = new AboutForm(_bg, Fg, FgDim, v, HostNote))
+                dlg.ShowDialog(this);
         }
 
         // A bare UserControl doesn't create its handle in the ctor, so SMTC is started
@@ -267,7 +305,7 @@ namespace MiniPlayerBand
             }
             catch
             {
-                UiPost(() => _title.Text = "SMTC unavailable");
+                UiPost(() => _title.Text = Loc.S.SmtcUnavailable);
             }
         }
 
@@ -568,7 +606,7 @@ namespace MiniPlayerBand
         // Briefly show the volume number in the title area (right of the art).
         void ShowVolume(int pct)
         {
-            _title.Text = "Volume  " + pct;
+            _title.Text = Loc.S.VolumePrefix + pct;
             _volTimer.Stop();
             _volTimer.Start();  // restart the restore countdown on each notch
         }

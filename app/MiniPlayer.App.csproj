@@ -14,5 +14,7 @@
     <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.19041.1" />
     <!-- shared player UI + SMTC logic; no CSDeskBand dependency -->
     <Compile Include="..\PlayerControl.cs" Link="PlayerControl.cs" />
+    <Compile Include="..\AboutForm.cs" Link="AboutForm.cs" />
+    <Compile Include="..\Strings.cs" Link="Strings.cs" />
   </ItemGroup>
 </Project>

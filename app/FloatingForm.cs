@@ -43,7 +43,7 @@ namespace MiniPlayerBand
             _player = new PlayerControl { Dock = DockStyle.Fill };
             Controls.Add(_player);
             AddMenuItems();
-            _player.HostNote = "Alt+drag anywhere:   move the window";
+            _player.HostNote = Loc.S.HostNoteAltDrag;
         }
 
         // Restore the last saved position if it's still on a visible screen; else
@@ -69,15 +69,24 @@ namespace MiniPlayerBand
             var menu = _player.ContextMenuStrip;
             if (menu == null) return;
 
-            var startup = new ToolStripMenuItem("Start with Windows",
+            var startup = new ToolStripMenuItem(Loc.S.StartWithWindows,
                 null, (s, e) => Startup.SetEnabled(!Startup.IsEnabled()));
             menu.Opening += (s, e) => startup.Checked = Startup.IsEnabled();
 
-            var exit = new ToolStripMenuItem("Exit", null, (s, e) => Close());
+            var exit = new ToolStripMenuItem(Loc.S.Exit, null, (s, e) => Close());
 
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(startup);
             menu.Items.Add(exit);
+
+            // Relabel the host's own items (and the About host note) when the shared
+            // player switches language via its Language submenu.
+            _player.LanguageChanged += () =>
+            {
+                startup.Text = Loc.S.StartWithWindows;
+                exit.Text = Loc.S.Exit;
+                _player.HostNote = Loc.S.HostNoteAltDrag;
+            };
         }
 
         protected override void OnHandleCreated(EventArgs e)
