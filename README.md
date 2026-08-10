@@ -1,10 +1,10 @@
 # Mini Player — Windows Taskbar Deskband
 
-A tiny media player that docks **inside the Windows 10 taskbar**. It shows a
-previous button, the current track's title and artist on two scrolling rows, and
-a next button (click the title to play/pause) — for any app that reports to
-Windows SMTC (System Media Transport Controls): YouTube Music in a browser,
-Spotify, etc.
+A tiny media player that docks **inside the Windows 10 taskbar**. It shows the
+current track's title and artist on two scrolling rows, and the whole band acts
+as invisible controls — click the **left / middle / right** of the title for
+**previous / play-pause / next** — for any app that reports to Windows SMTC
+(System Media Transport Controls): YouTube Music in a browser, Spotify, etc.
 
 Scroll the mouse wheel over the band to change system volume.
 
@@ -18,11 +18,17 @@ Scroll the mouse wheel over the band to change system volume.
 
 ## Features
 
-- Prev / next buttons with the track title + artist on two scrolling rows
-- Click the title to toggle play/pause
+- Track title + artist on two scrolling rows (scrolls only while hovered; dims while paused)
+- Gesture controls on the title: **left = previous, middle = play/pause, right = next**
+- Progress bar along the bottom edge — click it to seek within the track
 - Mouse wheel over the band changes system volume by 2 units per notch (no OSD banner)
+- Middle-click to mute / unmute
+- Right-click menu: transport, copy title / artist, language, and an **About / How to use**
+  dialog that draws a labeled sample of the player so the gestures are discoverable
+- **English and Vietnamese** (right-click → Language) — applies instantly, remembers your
+  choice, and defaults to your Windows display language
 - Background samples and matches your taskbar color
-- Event-driven via SMTC (no polling); title scrolls only while hovered
+- Event-driven via SMTC (no polling)
 - Adapts to normal and "Use small taskbar buttons" heights and DPI scaling
 
 ## Requirements
