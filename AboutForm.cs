@@ -188,7 +188,7 @@ namespace MiniPlayerBand
 
             // Progress bar along the bottom edge: dim track + brighter played portion.
             int by = band.Bottom - barH;
-            using (var track = new SolidBrush(PlayerControl.Lighten(_bg, 24)))
+            using (var track = new SolidBrush(PlayerControl.Shade(_bg, 24)))
                 g.FillRectangle(track, band.X, by, band.Width, barH);
             using (var fill = new SolidBrush(_fg))
                 g.FillRectangle(fill, band.X, by, (int)(band.Width * 0.45), barH);

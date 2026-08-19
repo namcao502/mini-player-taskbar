@@ -39,8 +39,9 @@ namespace MiniPlayerBand
             ClientSize = new Size(BandWidth, BandHeight);
             StartPosition = FormStartPosition.Manual;
             Location = StartLocation();
-            BackColor = PlayerControl.TaskbarColor();
             _player = new PlayerControl { Dock = DockStyle.Fill };
+            BackColor = _player.BandColor;
+            _player.ThemeChanged += () => BackColor = _player.BandColor;  // follow a light/dark switch
             Controls.Add(_player);
             AddMenuItems();
             _player.HostNote = Loc.S.HostNoteAltDrag;

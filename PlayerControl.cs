@@ -17,6 +17,7 @@ using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Microsoft.Win32;
 using Windows.Foundation;
 using Windows.Media;
 using Windows.Media.Control;
@@ -29,13 +30,33 @@ namespace MiniPlayerBand
 
     public class PlayerControl : UserControl
     {
-        static readonly Color Fg = Color.FromArgb(240, 240, 240);
-        static readonly Color FgDim = Color.FromArgb(120, 120, 120);  // title color while paused
-        bool _titlePaused = true;  // last applied look, so we only repaint on change
-        Color _bg = Color.FromArgb(32, 32, 32);  // taskbar color; sampled from the real taskbar at startup
+        // Text sits directly on the sampled taskbar color, so its brightness has to
+        // follow that color: the Windows light theme paints a near-white taskbar,
+        // where fixed light-on-dark text is invisible. Picked in ApplyTheme.
+        static readonly Color FgOnDark = Color.FromArgb(240, 240, 240);
+        static readonly Color FgDimOnDark = Color.FromArgb(120, 120, 120);  // title color while paused
+        static readonly Color FgOnLight = Color.FromArgb(16, 16, 16);
+        static readonly Color FgDimOnLight = Color.FromArgb(105, 105, 105);
 
-        internal static Color Lighten(Color c, int d) =>
-            Color.FromArgb(Math.Min(255, c.R + d), Math.Min(255, c.G + d), Math.Min(255, c.B + d));
+        bool _titlePaused;  // dim look currently applied; ctor paints the bright one
+        Color _bg = Color.FromArgb(32, 32, 32);  // taskbar color; sampled from the real taskbar
+        Color _fg = FgOnDark, _fgDim = FgDimOnDark;
+        bool _themed;  // ApplyTheme has run at least once
+
+        Bitmap _chromeBuf;  // opaque back-buffer for the areas the label doesn't cover (see RepaintChrome)
+
+        // Perceived brightness (ITU-R BT.601); >= 128 = a light background.
+        internal static bool IsLight(Color c) => (c.R * 299 + c.G * 587 + c.B * 114) / 1000 >= 128;
+
+        // Nudge a color away from itself: lighten a dark one, darken a light one, so
+        // the shifted shade stays visible under either theme.
+        internal static Color Shade(Color c, int d)
+        {
+            int k = IsLight(c) ? -d : d;
+            return Color.FromArgb(Clamp(c.R + k), Clamp(c.G + k), Clamp(c.B + k));
+        }
+
+        static int Clamp(int v) => v < 0 ? 0 : v > 255 ? 255 : v;
 
         readonly MarqueeLabel _title = new();
 
@@ -47,10 +68,15 @@ namespace MiniPlayerBand
         string _trackTitle = "";                                // real title, or "" = no media (shown as Loc.S.NoMedia)
         readonly Timer _volTimer = new() { Interval = 1200 };   // how long the volume number stays
         readonly Timer _clearTimer = new() { Interval = 800 };  // debounce before falling back to "No media"
+        readonly Timer _themeTimer = new() { Interval = 500 };  // re-samples the taskbar after a light/dark switch
+        int _themeTries;                                        // remaining re-samples
+        readonly Timer _initTimer = new() { Interval = 3000 };  // retries SMTC when it isn't up yet
+        int _initTries;
 
         // Progress bar: last timeline snapshot + interpolation while playing.
         const int BarH = 2;                                        // progress bar height, px
         const int SeekH = 8;                                       // bottom strip reserved as the click-to-seek target
+        const int TitlePad = 2;                                    // left/right margin the title label leaves uncovered
         readonly Timer _progressTimer = new() { Interval = 1000 }; // advances the bar between SMTC timeline events
         readonly Timer _settleTimer = new() { Interval = 300 };    // re-read after a session switch; the first snapshot is often stale
         int _settleTries;                                          // remaining settle re-reads
@@ -70,13 +96,17 @@ namespace MiniPlayerBand
         // Raised after the UI language changes so hosts can relabel their own items.
         public event Action LanguageChanged;
 
+        // Raised after the taskbar color is (re-)sampled, so hosts can repaint their
+        // own background to match. Read the new color from BandColor.
+        public event Action ThemeChanged;
+
+        // The sampled taskbar color the player is currently painted with.
+        public Color BandColor => _bg;
+
         public PlayerControl()
         {
-            _bg = TaskbarColor();  // sample the taskbar color first, so children are built with it
-            BackColor = _bg;
+            ApplyTheme();  // sample the taskbar color first, so children are built with it
 
-            _title.BackColor = _bg;
-            _title.ForeColor = Fg;
             _title.Font = new Font("Segoe UI", 9f);
             _title.Text = DisplayTitle();
             _title.Cursor = Cursors.Hand;
@@ -90,9 +120,51 @@ namespace MiniPlayerBand
             MouseClick += (s, e) => { if (e.Button == MouseButtons.Middle) ToggleMute(); };  // middle-click band body = mute
             _volTimer.Tick += (s, e) => { _volTimer.Stop(); _title.Text = DisplayTitle(); };  // restore title
             _clearTimer.Tick += (s, e) => { _clearTimer.Stop(); SetTitle(""); };
-            _progressTimer.Tick += (s, e) => InvalidateBar();
+            _progressTimer.Tick += (s, e) => RepaintChrome();
             _settleTimer.Tick += (s, e) => SettleTimeline();
+            _themeTimer.Tick += (s, e) => { ApplyTheme(); if (--_themeTries <= 0) _themeTimer.Stop(); };
+            _initTimer.Tick += (s, e) => { _initTimer.Stop(); _ = Init(); };
+            SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
             BuildMenu();
+        }
+
+        // ---- theme (taskbar color -> text color) ----
+
+        // Sample the taskbar and repaint in colors that read against it. Dark taskbar
+        // -> light text, light taskbar -> dark text; without this the light theme
+        // shows near-white text on a near-white band.
+        void ApplyTheme()
+        {
+            Color bg = TaskbarColor();
+            if (_themed && bg == _bg) return;  // nothing changed
+            _themed = true;
+            _bg = bg;
+            _fg = IsLight(bg) ? FgOnLight : FgOnDark;
+            _fgDim = IsLight(bg) ? FgDimOnLight : FgDimOnDark;
+
+            BackColor = bg;
+            _title.BackColor = bg;
+            _title.ForeColor = _titlePaused ? _fgDim : _fg;
+            ThemeChanged?.Invoke();
+            // Refresh, not Invalidate: it repaints synchronously, so the new colors
+            // land even in Explorer's pump where a posted WM_PAINT would be starved.
+            // RepaintChrome covers what even that misses inside the taskbar.
+            if (IsHandleCreated) { Refresh(); _title.Refresh(); RepaintChrome(); }
+        }
+
+        // Windows raises this off our UI thread when the user switches light/dark mode
+        // or the accent color. The taskbar has not finished repainting yet, so re-sample
+        // a few times over the next couple of seconds rather than once, immediately.
+        void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
+        {
+            if (e.Category != UserPreferenceCategory.General &&
+                e.Category != UserPreferenceCategory.Color &&
+                e.Category != UserPreferenceCategory.VisualStyle) return;
+            try
+            {
+                UiPost(() => { _themeTries = 4; _themeTimer.Stop(); _themeTimer.Start(); });
+            }
+            catch { }  // handle torn down between the check and the post
         }
 
         // Central title setter: don't overwrite the volume readout while it is showing.
@@ -238,7 +310,7 @@ namespace MiniPlayerBand
         void ShowAbout()
         {
             var v = typeof(PlayerControl).Assembly.GetName().Version;
-            using (var dlg = new AboutForm(_bg, Fg, FgDim, v, HostNote))
+            using (var dlg = new AboutForm(_bg, _fg, _fgDim, v, HostNote))
                 dlg.ShowDialog(this);
         }
 
@@ -259,24 +331,67 @@ namespace MiniPlayerBand
         {
             using (var b = new SolidBrush(_bg))
                 e.Graphics.FillRectangle(b, ClientRectangle);
-            DrawProgress(e.Graphics);
+            DrawProgress(e.Graphics, ClientSize.Height - BarH);
         }
 
-        // Thin bar along the bottom edge: dim track + brighter filled portion.
-        void DrawProgress(Graphics g)
+        // Thin bar along the bottom edge: played portion + dim track for the rest.
+        // The two fills don't overlap, so repainting it every second doesn't flicker.
+        void DrawProgress(Graphics g, int y)
         {
+            int w = ClientSize.Width;
+            if (w <= 0 || y < 0) return;
             double f = ProgressFraction();
-            if (f < 0) return;  // no/unknown duration -> no bar
-            int w = ClientSize.Width, y = ClientSize.Height - BarH;
-            using (var track = new SolidBrush(Lighten(_bg, 24)))
-                g.FillRectangle(track, 0, y, w, BarH);
-            using (var fill = new SolidBrush(Fg))
-                g.FillRectangle(fill, 0, y, (int)(w * f), BarH);
+            if (f < 0)  // no/unknown duration -> no bar, and erase a stale one
+            {
+                using (var b = new SolidBrush(_bg))
+                    g.FillRectangle(b, 0, y, w, BarH);
+                return;
+            }
+            int fw = (int)(w * f);
+            using (var fill = new SolidBrush(_fg))
+                g.FillRectangle(fill, 0, y, fw, BarH);
+            using (var track = new SolidBrush(Shade(_bg, 24)))
+                g.FillRectangle(track, fw, y, w - fw, BarH);
         }
 
-        void InvalidateBar()
+        // Repaint everything the title label does not cover -- the side margins, the
+        // bottom seek strip and the progress bar -- without going through Invalidate().
+        //
+        // Two Explorer-only traps, both measured in the deskband:
+        //   * a posted WM_PAINT is starved by the taskbar's busy message pump, so
+        //     OnPaintBackground never runs and these areas stay the window class's
+        //     white (the same reason MarqueeLabel draws its own frames);
+        //   * filling the window DC directly leaves the alpha byte at 0, and the
+        //     composited taskbar surface then renders those pixels as good as
+        //     invisible (a 16,16,16 bar measured 254 against 255).
+        // So: draw into an opaque 24bpp back-buffer and blit it, clipped to the
+        // uncovered regions so the label is left alone.
+        void RepaintChrome()
         {
-            if (IsHandleCreated) Invalidate(new Rectangle(0, ClientSize.Height - BarH, ClientSize.Width, BarH));
+            if (!IsHandleCreated) return;
+            int w = ClientSize.Width, h = ClientSize.Height;
+            if (w <= 0 || h <= 0) return;
+            if (_chromeBuf == null || _chromeBuf.Width != w || _chromeBuf.Height != h)
+            {
+                _chromeBuf?.Dispose();
+                _chromeBuf = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+            }
+            using (var b = Graphics.FromImage(_chromeBuf))
+            {
+                using (var bg = new SolidBrush(_bg))
+                    b.FillRectangle(bg, 0, 0, w, h);
+                DrawProgress(b, h - BarH);
+            }
+            using (var region = new Region(new Rectangle(0, 0, TitlePad, h)))
+            {
+                region.Union(new Rectangle(w - TitlePad, 0, TitlePad, h));
+                region.Union(new Rectangle(0, h - SeekH, w, SeekH));
+                using (var g = CreateGraphics())
+                {
+                    g.Clip = region;
+                    g.DrawImageUnscaled(_chromeBuf, 0, 0);
+                }
+            }
         }
 
         // Height-adaptive: the scrolling title fills the full width; the bottom
@@ -288,8 +403,8 @@ namespace MiniPlayerBand
             int h = ClientSize.Height, w = ClientSize.Width;
             if (h <= 0 || w <= 0) return;
 
-            const int pad = 2;
-            _title.SetBounds(pad, 0, Math.Max(0, w - pad * 2), h - SeekH);
+            _title.SetBounds(TitlePad, 0, Math.Max(0, w - TitlePad * 2), h - SeekH);
+            RepaintChrome();  // the new margins/strip won't repaint themselves in Explorer
         }
 
         // ---- SMTC wiring (events, no polling) ----
@@ -305,7 +420,14 @@ namespace MiniPlayerBand
             }
             catch
             {
-                UiPost(() => _title.Text = Loc.S.SmtcUnavailable);
+                // SMTC is not up yet -- the deskband is constructed while Explorer is
+                // still starting (toolbar already enabled at logon or after a restart),
+                // and without a retry the band would sit on "SMTC unavailable" forever.
+                UiPost(() =>
+                {
+                    if (++_initTries <= 6) { _initTimer.Stop(); _initTimer.Start(); }
+                    else _title.Text = Loc.S.SmtcUnavailable;
+                });
             }
         }
 
@@ -418,7 +540,7 @@ namespace MiniPlayerBand
             }
             catch { _tlEnd = _tlStart; }  // treat as no-duration -> bar hidden
             _progressTimer.Enabled = _playing && _tlEnd > _tlStart && IsHandleCreated;
-            InvalidateBar();
+            RepaintChrome();
         }
 
         // After a session switch the first GetTimelineProperties() snapshot is often
@@ -461,7 +583,7 @@ namespace MiniPlayerBand
             if (_playing == _titlePaused)  // play state changed -> dim/brighten the title
             {
                 _titlePaused = !_playing;
-                _title.ForeColor = _playing ? Fg : FgDim;
+                _title.ForeColor = _playing ? _fg : _fgDim;
                 _title.Refresh();  // force an immediate repaint (WM_PAINT is starved in Explorer)
             }
             ReadTimeline();
@@ -655,7 +777,12 @@ namespace MiniPlayerBand
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { _volTimer?.Dispose(); _clearTimer?.Dispose(); _progressTimer?.Dispose(); _settleTimer?.Dispose(); _menu?.Dispose(); }
+            if (disposing)
+            {
+                SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;  // static event: leaks the control otherwise
+                _volTimer?.Dispose(); _clearTimer?.Dispose(); _progressTimer?.Dispose(); _settleTimer?.Dispose();
+                _themeTimer?.Dispose(); _initTimer?.Dispose(); _menu?.Dispose(); _chromeBuf?.Dispose();
+            }
             base.Dispose(disposing);
         }
     }

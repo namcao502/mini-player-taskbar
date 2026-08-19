@@ -68,6 +68,11 @@ constraints, most learned the hard way:
   flashing "No media" during the gap.
 - **Background matches the taskbar** by sampling the most common pixel color of
   `Shell_TrayWnd` (`TaskbarColor`) and painting the band + children with it.
+  **Text color follows that sample** (`ApplyTheme`): a light taskbar gets dark text,
+  a dark one light text — fixed light-on-dark text is invisible in the Windows light
+  theme. `SystemEvents.UserPreferenceChanged` re-samples on a live light/dark switch
+  (a few times over ~2s, since the taskbar repaints after the notification) and hosts
+  repaint their own background from the `ThemeChanged` event + `BandColor`.
   True transparency is impossible for a deskband — Explorer paints no taskbar
   background inside the band's rectangle, so "transparent" reveals black. A
   perfect match needs Windows "Transparency effects" off (solid taskbar).
@@ -81,6 +86,15 @@ constraints, most learned the hard way:
   step). The new level is shown briefly in the title area, then the track title
   is restored (`SetTitle` suppresses updates while the readout shows).
 - **Glyphs** are Segoe MDL2 Assets code points written as `\uXXXX` escapes.
+- **Nothing repaints itself inside Explorer.** A posted `WM_PAINT` is starved by the
+  taskbar's message pump, so `OnPaintBackground` never runs in the deskband — and a
+  `FillRectangle` straight onto the window DC leaves the alpha byte at 0, which the
+  composited taskbar surface renders as good as invisible (a `16,16,16` progress bar
+  measured **254** against 255). Anything the band must show goes through an opaque
+  `Format24bppRgb` back-buffer blitted to the DC: `MarqueeLabel` for the text,
+  `RepaintChrome` for the side margins, seek strip and progress bar. Both symptoms
+  look like "the feature is broken" but the values in the code are correct — check
+  the drawing path before the logic.
 - **`IconButton`** and **`MarqueeLabel`** are owner-drawn: the button centers the
   glyph exactly, and the marquee renders each frame directly to the DC on a
   timer (with a back-buffer) instead of via `Invalidate()`, whose `WM_PAINT` gets

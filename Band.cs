@@ -27,8 +27,10 @@ namespace MiniPlayerBand
             Options.ShowTitle = false;
             Options.MinHorizontalSize = new CSDeskBand.Size(150, 20);
             Options.HorizontalSize = new CSDeskBand.Size(150, 40);  // fixed width (min == desired) so it does not auto-resize
-            BackColor = PlayerControl.TaskbarColor();  // match the taskbar so no gray sliver shows behind the child
-            Controls.Add(new PlayerControl { Dock = DockStyle.Fill });
+            var player = new PlayerControl { Dock = DockStyle.Fill };
+            BackColor = player.BandColor;  // match the taskbar so no gray sliver shows behind the child
+            player.ThemeChanged += () => BackColor = player.BandColor;  // follow a light/dark switch
+            Controls.Add(player);
         }
     }
 }
