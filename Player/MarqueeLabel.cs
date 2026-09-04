@@ -130,9 +130,21 @@ namespace MiniPlayerBand
                     }
                     else
                     {
-                        TextRenderer.DrawText(g, line, Font, new System.Drawing.Point(0, y), ForeColor, BackColor, TFlags);  // left-align
+                        // Bounded overload so GDI has an edge to ellipsize against; the Point
+                        // one would just clip mid-glyph with nothing saying the title goes on.
+                        TextRenderer.DrawText(g, line, Font, new Rectangle(0, y, w, _lineH),
+                                              ForeColor, BackColor, TFlags | TextFormatFlags.EndEllipsis);
                     }
                 }
+
+                // Marks only while hovered -- at rest the band must read as plain taskbar text.
+                // After the text: DrawText passes a backColor, so a glyph run erases what is under.
+                if (_hover)
+                    using (var divider = new Pen(Color.FromArgb(110, ForeColor)))
+                    {
+                        g.DrawLine(divider, w / 4, 0, w / 4, h);
+                        g.DrawLine(divider, w * 3 / 4, 0, w * 3 / 4, h);
+                    }
             }
             target.DrawImageUnscaled(_buffer, 0, 0);
         }

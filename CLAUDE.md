@@ -66,7 +66,7 @@ registered.
 | `Player/PlayerControl.Menu.cs` | Right-click menu, language switch, copy helpers, `ShowAbout`. |
 | `Player/PlayerControl.Smtc.cs` | Session pick + re-hook, title/playback/timeline reads, `RunCommand`. |
 | `Player/PlayerControl.Input.cs` | Click zones, seek, wheel-volume, mute. |
-| `Player/MarqueeLabel.cs` | The scrolling title and the click-zone geometry (`ZoneAt`). Draws no hover feedback, on purpose. |
+| `Player/MarqueeLabel.cs` | The scrolling title, the zone dividers, and the click-zone geometry (`ZoneAt`). No hover feedback, on purpose. |
 | `Interop/CoreAudio.cs` | Raw Core Audio COM declarations (vtable order matters). |
 | `Interop/SystemVolume.cs` | `Adjust` / `ToggleMute` on the default render endpoint. |
 | `Interop/TaskbarColor.cs` | `Sample()` — the taskbar's pixel color. |
@@ -128,15 +128,28 @@ constraints, most learned the hard way:
   When a row band is shorter than one line (that is "Use small taskbar buttons":
   ~11px per row against a 15px line), `MarqueeLabel.Measure` joins the two rows
   into `"title - artist"` on one; without that the rows overlap and clip.
-- **Every control is an invisible gesture**, which is the central UX risk here:
-  nothing on the band looks clickable. **This is deliberate — the band must read as
-  plain taskbar text.** Hover feedback (a zone tint plus a Segoe MDL2 glyph showing
-  what a click would do) was built and then removed on 2026-09-04: it made the band
-  look like a floating widget pasted into the taskbar. Do not reintroduce it.
-  Discoverability is handled off-screen instead, by `Loc.IsFirstRun()` (marker file
-  `%AppData%\MiniPlayer\seen.txt`), which shows the About / how-to dialog once, ever.
-  `ZoneAt` in `MarqueeLabel` stays the single definition of the 1/4 - 1/2 - 1/4
-  split that `OnTitleClick` dispatches on.
+- **Every control is an invisible gesture**, which is the central UX risk here.
+  **At rest the band must read as plain taskbar text** — measured, both zone columns
+  match the background exactly. Two things carry discoverability, and neither is
+  redundant:
+  - 1px full-height zone marks at the 1/4 and 3/4 boundaries, `Color.FromArgb(110,
+    ForeColor)` in `MarqueeLabel.Render`, **only while `_hover`**. Three earlier shapes
+    failed and are not worth retrying: a zone tint plus a Segoe MDL2 glyph chip (looked
+    like a floating widget pasted into the taskbar), always-on full-height lines (read as
+    crossing out the title), and always-on 3px edge stubs (too faint to notice). Hover is
+    the right trigger because a pointer already on the band means a click is coming.
+    Drawn *after* the text: `DrawText` passes a backColor, so an opaque glyph run wipes
+    out anything underneath — that is how the 1/4 line once vanished behind the artist
+    row. `_hover` already repaints on enter and leave via `UpdateScroll`, so no extra
+    wiring. `ZoneAt` stays the single definition of the split; keep it, these marks and
+    `AboutForm.DrawBand` in step.
+  - `Loc.IsFirstRun()` + `Loc.MarkSeen()` (marker `%AppData%\MiniPlayer\seen.txt`) show
+    the About dialog once, ever. **They are split on purpose.** They used to be one
+    call that wrote the marker and returned true, while the dialog only opened 1500ms
+    later on `_firstRunTimer` — so an Explorer restart inside that window (every
+    `rebuild.ps1` does one) silently spent the only chance the user ever gets. Mark
+    *after* `ShowDialog` returns, and never from the right-click menu path.
+    The right-click About item is the only way back to that dialog afterwards.
 - **Volume on wheel** (`OnWheel`): sets master volume directly via Core Audio
   (`IAudioEndpointVolume.SetMasterVolumeLevelScalar`, ±0.02 = 2 units/notch) —
   chosen over the volume media key so there's **no OSD banner**. The event is

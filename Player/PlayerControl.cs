@@ -88,15 +88,17 @@ namespace MiniPlayerBand
             // Wheel over any part of the band adjusts volume.
             foreach (Control c in new Control[] { this, _title })
                 c.MouseWheel += OnWheel;
-            MouseDown += OnSeek;  // clicks land on the band only in the uncovered bottom strip
-            MouseClick += (s, e) => { if (e.Button == MouseButtons.Middle) ToggleMuteAndShow(); };  // middle-click band body = mute
+            // Both only ever fire on the parts the title label leaves uncovered: the side
+            // margins and the bottom strip. Each checks e.Y so exactly one of them acts.
+            MouseClick += OnSeek;
+            MouseClick += OnBandClick;
             _volTimer.Tick += (s, e) => { _volTimer.Stop(); _title.Text = DisplayTitle(); };  // restore title
             _clearTimer.Tick += (s, e) => { _clearTimer.Stop(); SetTitle(""); };
             _progressTimer.Tick += (s, e) => { PollTheme(); RepaintChrome(); };
             _settleTimer.Tick += (s, e) => SettleTimeline();
             _themeTimer.Tick += (s, e) => { ApplyTheme(); if (--_themeTries <= 0) _themeTimer.Stop(); };
             _initTimer.Tick += (s, e) => { _initTimer.Stop(); _ = Init(); };
-            _firstRunTimer.Tick += (s, e) => { _firstRunTimer.Stop(); ShowAbout(); };
+            _firstRunTimer.Tick += (s, e) => { _firstRunTimer.Stop(); ShowAbout(); Loc.MarkSeen(); };
             SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
             SystemEvents.SessionSwitch += OnSessionSwitch;  // the screen is unreadable while locked
             BuildMenu();
@@ -109,7 +111,7 @@ namespace MiniPlayerBand
             base.OnHandleCreated(e);
             if (_inited) return;
             _inited = true;
-            // Shown once ever, since nothing on the band advertises the gestures. Delayed
+            // Shown once ever, since nothing on the band spells the gestures out. Delayed
             // so the band paints first instead of opening a modal over a blank strip.
             if (Loc.IsFirstRun()) _firstRunTimer.Start();
             _ = Init();

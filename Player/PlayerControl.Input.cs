@@ -14,7 +14,23 @@ namespace MiniPlayerBand
         {
             if (e.Button == MouseButtons.Middle) { ToggleMuteAndShow(); return; }
             if (e.Button != MouseButtons.Left) return;
-            switch (_title.ZoneAt(e.X))
+            RunZone(_title.ZoneAt(e.X));
+        }
+
+        // The band itself, i.e. only the parts the title does not cover. Above the seek
+        // strip that is the _titlePad margin, which would otherwise be a dead 2px column.
+        void OnBandClick(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Middle) { ToggleMuteAndShow(); return; }
+            if (e.Button != MouseButtons.Left || e.Y >= ClientSize.Height - _seekH) return;
+            int x = e.X - _titlePad;
+            int max = _title.Width - 1;
+            RunZone(_title.ZoneAt(x < 0 ? 0 : x > max ? max : x));
+        }
+
+        void RunZone(int zone)
+        {
+            switch (zone)
             {
                 case 0: _ = RunCommand(x => x.TrySkipPreviousAsync()); break;
                 case 1: _ = RunCommand(x => x.TryTogglePlayPauseAsync()); break;
@@ -22,7 +38,8 @@ namespace MiniPlayerBand
             }
         }
 
-        // Left-click in the bottom strip seeks to that fraction of the duration.
+        // Seeks on a completed click, not on press: the strip owns the screen's bottom
+        // pixel row, so a mouse slammed at the edge would otherwise seek by accident.
         void OnSeek(object sender, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left || e.Y < ClientSize.Height - _seekH) return;

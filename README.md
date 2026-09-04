@@ -15,9 +15,10 @@ Scroll the mouse wheel over the band to change system volume.
 
 - Track title + artist on two scrolling rows (scrolls only while hovered; dims while paused;
   collapses to one row on a taskbar too short for two)
-- Gesture controls on the title: **left = previous, middle = play/pause, right = next**.
-  The band stays plain taskbar text — no buttons, no hover highlight; the About dialog
-  shows you the split instead
+- Gesture controls on the title: **left = previous, middle = play/pause, right = next**,
+  with two faint dividers appearing while you hover to show where the split is. At rest
+  the band is plain taskbar text — no buttons,
+  no hover highlight; the About dialog shows the same split on a labeled mock
 - Progress bar along the bottom edge — click it to seek within the track
 - Mouse wheel over the band changes system volume by 2 units per notch (no OSD banner)
 - Middle-click to mute / unmute. Volume and mute both report on the second row and keep

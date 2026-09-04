@@ -99,18 +99,19 @@ namespace MiniPlayerBand
         static string FilePath => Path.Combine(Dir, "lang.txt");
         static string SeenPath => Path.Combine(Dir, "seen.txt");
 
-        // True exactly once per user; the first call writes the marker. Drives the
-        // unprompted About, since nothing on screen hints the gestures or the menu exist.
-        public static bool IsFirstRun()
+        // Pure check, deliberately split from MarkSeen: writing here would spend the one
+        // unprompted About even when the band dies before the dialog ever opens.
+        public static bool IsFirstRun() => !File.Exists(SeenPath);
+
+        // Call only once the dialog has actually been dismissed.
+        public static void MarkSeen()
         {
             try
             {
-                if (File.Exists(SeenPath)) return false;
                 Directory.CreateDirectory(Dir);
                 File.WriteAllText(SeenPath, "1");
-                return true;
             }
-            catch { return false; }  // can't record it -> don't show it on every launch
+            catch { }  // can't record it -> it shows again, which beats crashing
         }
 
         // Saved choice if present, else the Windows display language (vi -> Vietnamese).
