@@ -4,11 +4,13 @@
 # fresh obj DLL over the now-unlocked bin -> relaunch. No re-registration needed
 # (CLSID and codebase path are stable). Re-enable the toolbar after it restarts.
 $ErrorActionPreference = 'Stop'
-$root = $PSScriptRoot
+$root = Split-Path $PSScriptRoot -Parent   # this script lives in scripts/
 $obj  = Join-Path $root 'obj\Release\net48\MiniPlayerBand.dll'
 $bin  = Join-Path $root 'bin\Release\net48\MiniPlayerBand.dll'
 
-dotnet build -c Release -v quiet   # bin copy step will fail while loaded; obj still builds
+# Name the project explicitly: bare `dotnet build` resolves against the caller's
+# working directory, which is not this script's location.
+dotnet build (Join-Path $root 'MiniPlayerBand.csproj') -c Release -v quiet   # bin copy step will fail while loaded; obj still builds
 
 Stop-Process -Name explorer -Force
 $ok = $false

@@ -7,10 +7,6 @@
     <RootNamespace>MiniPlayerBand</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <!-- the standalone Win11 app lives under app/; keep its sources out of the DLL -->
-    <Compile Remove="app\**" />
-  </ItemGroup>
-  <ItemGroup>
     <!-- lets dotnet build net48 without Visual Studio installed -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <!-- deskband (IDeskBand2 COM plumbing) WinForms host -->

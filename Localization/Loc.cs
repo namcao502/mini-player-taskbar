@@ -1,13 +1,5 @@
-// UI string table + language selection, shared by every host (deskband + app).
-//
-// No .resx/satellite assemblies on purpose: the deskband ships as a single DLL
-// registered via RegAsm /codebase, and satellite probing would complicate that
-// deploy for two languages. This hand-rolled table is enough -- one Strings
-// object per language, picked by Loc.Current, which defaults to the Windows
-// display language and remembers the user's choice in %AppData%\MiniPlayer.
-//
-// The literal values below are user-facing content, so the Vietnamese entries
-// carry real diacritics (this file must stay UTF-8).
+// UI strings, hand-rolled rather than .resx: the band ships as one RegAsm-registered DLL
+// and satellite probing is a burden. The Vietnamese literals need this file to stay UTF-8.
 
 using System;
 using System.Globalization;
@@ -15,30 +7,6 @@ using System.IO;
 
 namespace MiniPlayerBand
 {
-    enum Lang { En, Vi }
-
-    // One immutable bag of strings per language (built once, never mutated).
-    sealed class Strings
-    {
-        // Right-click menu.
-        public string Previous, PlayPause, Next, Stop;
-        public string Copy, TitleAndArtist, TitleOnly, ArtistOnly;
-        public string About, Language;
-
-        // Status text shown in the band title area.
-        public string NoMedia, SmtcUnavailable, VolumePrefix;
-
-        // Host (standalone app) menu items + the About host note.
-        public string StartWithWindows, Exit, HostNoteAltDrag;
-
-        // About / how-to-use dialog.
-        public string AboutDesc;
-        public string ZonePrev, ZonePlay, ZoneNext;
-        public string FracLeft, FracMiddle, FracRight;
-        public string CheatVolume, CheatMute, CheatSeek, CheatMenu;
-        public string Ok;
-    }
-
     static class Loc
     {
         // Language names are shown as endonyms in both languages (standard practice).
@@ -62,10 +30,8 @@ namespace MiniPlayerBand
             NoMedia = "No media",
             SmtcUnavailable = "SMTC unavailable",
             VolumePrefix = "Volume  ",
-
-            StartWithWindows = "Start with Windows",
-            Exit = "Exit",
-            HostNoteAltDrag = "Alt+drag anywhere:   move the window",
+            Muted = "Muted",
+            Unmuted = "Sound on",
 
             AboutDesc = "Follows whatever app is currently playing (browser, Spotify, etc.) via Windows SMTC.",
             ZonePrev = "Prev",
@@ -97,10 +63,8 @@ namespace MiniPlayerBand
             NoMedia = "Không có nội dung",
             SmtcUnavailable = "SMTC không khả dụng",
             VolumePrefix = "Âm lượng  ",
-
-            StartWithWindows = "Khởi động cùng Windows",
-            Exit = "Thoát",
-            HostNoteAltDrag = "Alt+kéo bất kỳ đâu:   di chuyển cửa sổ",
+            Muted = "Đã tắt tiếng",
+            Unmuted = "Đã bật tiếng",
 
             AboutDesc = "Hiển thị ứng dụng đang phát (trình duyệt, Spotify, v.v.) qua Windows SMTC.",
             ZonePrev = "Bài trước",
@@ -133,6 +97,21 @@ namespace MiniPlayerBand
         static string Dir =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "MiniPlayer");
         static string FilePath => Path.Combine(Dir, "lang.txt");
+        static string SeenPath => Path.Combine(Dir, "seen.txt");
+
+        // True exactly once per user; the first call writes the marker. Drives the
+        // unprompted About, since nothing on screen hints the gestures or the menu exist.
+        public static bool IsFirstRun()
+        {
+            try
+            {
+                if (File.Exists(SeenPath)) return false;
+                Directory.CreateDirectory(Dir);
+                File.WriteAllText(SeenPath, "1");
+                return true;
+            }
+            catch { return false; }  // can't record it -> don't show it on every launch
+        }
 
         // Saved choice if present, else the Windows display language (vi -> Vietnamese).
         static Lang Load()

@@ -1,14 +1,5 @@
-// About / how-to-use dialog for the mini player.
-//
-// Every control on the band is an unlabeled gesture (invisible click zones on the
-// title, wheel = volume, bottom-edge = seek), so a plain text list is hard to map
-// onto the real thing. This dialog draws a static *mock* of the band -- painted the
-// same taskbar color, with a sample title/artist and a half-filled progress bar --
-// and labels the left/middle/right zones directly on it, so the user can picture
-// where each gesture lives. Owner-drawn (like MarqueeLabel) with one real OK button.
-//
-// Static mock only: a live PlayerControl would read real SMTC and its click zones
-// would fire transport commands inside the dialog.
+// About / how-to-use dialog: a labeled *mock* of the band, since a text list of invisible
+// gestures is hard to map on. A live PlayerControl would fire real transport commands.
 
 using System;
 using System.Drawing;
@@ -26,20 +17,26 @@ namespace MiniPlayerBand
 
         readonly Color _bg, _fg, _fgDim;
         readonly string _heading;
-        readonly string[] _captions;   // one gesture per line, last may be the host note
+        readonly string[] _captions;   // one gesture per line
 
         readonly Font _headingFont;
         readonly Font _bandFont;        // matches the real title font (Segoe UI 9pt)
         readonly Button _ok;
 
-        public AboutForm(Color bg, Color fg, Color fgDim, Version version, string hostNote)
+        public AboutForm(Color bg, Color fg, Color fgDim, Version version)
         {
             _bg = bg;
             _fg = fg;
             _fgDim = fgDim;
             _heading = Loc.AppName + " " + version;
 
-            _captions = BuildCaptions(hostNote);
+            _captions = new[]
+            {
+                Loc.S.CheatVolume,
+                Loc.S.CheatMute,
+                Loc.S.CheatSeek,
+                Loc.S.CheatMenu,
+            };
 
             Font = SystemFonts.MessageBoxFont;  // clean dialog look (Segoe UI 9pt)
             _headingFont = new Font(Font.FontFamily, Font.SizeInPoints + 2f, FontStyle.Bold);
@@ -51,11 +48,10 @@ namespace MiniPlayerBand
             MinimizeBox = false;
             ShowIcon = false;
             ShowInTaskbar = false;
-            TopMost = true;                        // above the always-on-top floating host
+            TopMost = true;                        // the taskbar is topmost; the dialog must clear it
             StartPosition = FormStartPosition.CenterScreen;
-            // Layout is driven entirely by font metrics below (LineH/Scale), which
-            // already track DPI via the DPI-scaled system font -- so keep auto-scale
-            // off, or the form gets scaled a second time and the OK button drifts.
+            // Off, because LineH/Scale already track DPI through the system font --
+            // auto-scale would apply it a second time and the OK button would drift.
             AutoScaleMode = AutoScaleMode.None;
             BackColor = SystemColors.Control;
             DoubleBuffered = true;
@@ -80,22 +76,6 @@ namespace MiniPlayerBand
                                      ClientSize.Height - pad - _ok.Height);
         }
 
-        static string[] BuildCaptions(string hostNote)
-        {
-            string[] baseLines =
-            {
-                Loc.S.CheatVolume,
-                Loc.S.CheatMute,
-                Loc.S.CheatSeek,
-                Loc.S.CheatMenu,
-            };
-            if (string.IsNullOrEmpty(hostNote)) return baseLines;
-            var all = new string[baseLines.Length + 1];
-            Array.Copy(baseLines, all, baseLines.Length);
-            all[baseLines.Length] = hostNote;
-            return all;
-        }
-
         int LineH() => TextRenderer.MeasureText("Ag", Font).Height;
         int Scale(int px) => (int)Math.Round(px * (LineH() / 15.0));  // 15px = the ~9pt line height at 96dpi
 
@@ -105,9 +85,8 @@ namespace MiniPlayerBand
             RenderContent(e.Graphics, ClientSize.Width);
         }
 
-        // Single top-to-bottom layout walk used for both sizing (g == null, measure
-        // only) and drawing. y advances identically either way, so the measured
-        // height always matches what gets painted. Returns the content's bottom y.
+        // One walk serving both sizing (g == null) and drawing, so the measured height
+        // cannot drift from what gets painted. Returns the content's bottom y.
         int RenderContent(Graphics g, int width)
         {
             int lineH = LineH();
