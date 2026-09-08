@@ -139,7 +139,8 @@ namespace MiniPlayerBand
         }
 
         // Paint the mock band: taskbar-color fill, sample title/artist, a ~45% progress
-        // bar, and faint dividers at 1/4 and 3/4 marking the click zones.
+        // bar, and faint dividers at 1/4 and 3/4 marking the click zones on the mock
+        // (the real band shows a hover tooltip instead; this is a labeled diagram).
         void DrawBand(Graphics g, Rectangle band)
         {
             using (var bg = new SolidBrush(_bg))
