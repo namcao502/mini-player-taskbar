@@ -30,6 +30,11 @@ when Win11 support was dropped, so `PlayerControl` now has exactly one host.
 Built with the .NET SDK alone (no Visual Studio); `Microsoft.NETFramework.ReferenceAssemblies`
 provides the net48 targeting pack. No linter.
 
+`.github/workflows/build-and-test.yml` runs the build and the test project on every push
+and PR to `main`, on `windows-latest` (net48 + WinForms + COM interop need a Windows
+runner). CI never has the DLL locked the way a dev machine with the toolbar enabled
+does, so it doesn't need `rebuild.ps1`'s hot-swap dance -- a plain `dotnet build` works.
+
 ### Rebuild loop (important)
 
 Explorer loads the COM DLL in-process and the CLR keeps it loaded for
