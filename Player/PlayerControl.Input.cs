@@ -2,6 +2,7 @@
 // invisible zone.
 
 using System;
+using System.Drawing;
 using System.Windows.Forms;
 
 namespace MiniPlayerBand
@@ -26,6 +27,46 @@ namespace MiniPlayerBand
             int x = e.X - _titlePad;
             int max = _title.Width - 1;
             RunZone(_title.ZoneAt(x < 0 ? 0 : x > max ? max : x));
+        }
+
+        // Nothing is drawn on the band to mark the split, so the zone name is the only
+        // in-place hint. Re-armed per zone crossed, not once per control.
+        void OnTitleHover(object sender, MouseEventArgs e)
+        {
+            int zone = _title.ZoneAt(e.X);
+            if (zone == _hoverZone) return;
+            _hoverZone = zone;
+            _tip.Hide();
+            _tipTimer.Stop();
+            _tipTimer.Start();
+        }
+
+        void OnTitleLeave(object sender, EventArgs e)
+        {
+            _hoverZone = -1;  // else a language switch leaves stale text
+            _tipTimer.Stop();
+            _tip.Hide();
+        }
+
+        // Stays up for as long as the pointer rests in the zone; OnTitleLeave takes it down.
+        void ShowZoneTip()
+        {
+            _tipTimer.Stop();
+            string name;
+            switch (_hoverZone)
+            {
+                case 0: name = Loc.S.ZonePrev; break;
+                case 1: name = Loc.S.ZonePlay; break;
+                case 2: name = Loc.S.ZoneNext; break;
+                default: return;
+            }
+            // Anchored at the zone's left edge, so the tip's own left edge marks the
+            // boundary -- the job the removed divider lines used to do.
+            int x = _hoverZone == 0 ? 0 : _hoverZone == 1 ? _title.Width / 4 : _title.Width * 3 / 4;
+            // The label's client y=0 is the taskbar's top edge, so anchoring the tip's
+            // bottom just above it keeps the tip clear of the band it is naming.
+            Point anchor = _title.PointToScreen(new Point(x, 0));
+            _tip.Show(name, Handle, anchor.X, anchor.Y - Scale(4));
         }
 
         void RunZone(int zone)

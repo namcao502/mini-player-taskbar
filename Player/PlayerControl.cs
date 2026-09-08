@@ -30,6 +30,9 @@ namespace MiniPlayerBand
         Bitmap _chromeBuf;  // opaque back-buffer for the areas the label doesn't cover (see RepaintChrome)
 
         readonly MarqueeLabel _title = new();
+        readonly ZoneTip _tip = new();  // native, not WinForms ToolTip -- see ZoneTip's header
+        readonly Timer _tipTimer = new() { Interval = 500 };  // hover dwell before the zone name pops
+        int _hoverZone = -1;
 
         SessionManager _mgr;
         Session _session;
@@ -83,6 +86,8 @@ namespace MiniPlayerBand
             _title.Text = DisplayTitle();
             _title.Cursor = Cursors.Hand;
             _title.MouseClick += OnTitleClick;  // left 1/4 = prev, right 1/4 = next, middle = play/pause
+            _title.MouseMove += OnTitleHover;
+            _title.MouseLeave += OnTitleLeave;
             Controls.Add(_title);
 
             // Wheel over any part of the band adjusts volume.
@@ -92,6 +97,7 @@ namespace MiniPlayerBand
             // margins and the bottom strip. Each checks e.Y so exactly one of them acts.
             MouseClick += OnSeek;
             MouseClick += OnBandClick;
+            _tipTimer.Tick += (s, e) => ShowZoneTip();
             _volTimer.Tick += (s, e) => { _volTimer.Stop(); _title.Text = DisplayTitle(); };  // restore title
             _clearTimer.Tick += (s, e) => { _clearTimer.Stop(); SetTitle(""); };
             _progressTimer.Tick += (s, e) => { PollTheme(); RepaintChrome(); };
@@ -143,8 +149,8 @@ namespace MiniPlayerBand
                 SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
                 SystemEvents.SessionSwitch -= OnSessionSwitch;
                 _volTimer?.Dispose(); _clearTimer?.Dispose(); _progressTimer?.Dispose(); _settleTimer?.Dispose();
-                _themeTimer?.Dispose(); _initTimer?.Dispose(); _firstRunTimer?.Dispose();
-                _menu?.Dispose(); _chromeBuf?.Dispose();
+                _themeTimer?.Dispose(); _initTimer?.Dispose(); _firstRunTimer?.Dispose(); _tipTimer?.Dispose();
+                _menu?.Dispose(); _chromeBuf?.Dispose(); _tip?.Dispose();
             }
             base.Dispose(disposing);
         }

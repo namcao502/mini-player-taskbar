@@ -65,11 +65,12 @@ registered.
 | `Player/PlayerControl.Paint.cs` | `OnPaintBackground`, `MeasureMetrics`, `DrawProgress`, `RepaintChrome`, `OnLayout`. |
 | `Player/PlayerControl.Menu.cs` | Right-click menu, language switch, copy helpers, `ShowAbout`. |
 | `Player/PlayerControl.Smtc.cs` | Session pick + re-hook, title/playback/timeline reads, `RunCommand`. |
-| `Player/PlayerControl.Input.cs` | Click zones, seek, wheel-volume, mute. |
-| `Player/MarqueeLabel.cs` | The scrolling title, the zone dividers, and the click-zone geometry (`ZoneAt`). No hover feedback, on purpose. |
+| `Player/PlayerControl.Input.cs` | Click zones, the hover tooltip, seek, wheel-volume, mute. |
+| `Player/MarqueeLabel.cs` | The scrolling title and the click-zone geometry (`ZoneAt`). Draws nothing on hover, on purpose. |
 | `Interop/CoreAudio.cs` | Raw Core Audio COM declarations (vtable order matters). |
 | `Interop/SystemVolume.cs` | `Adjust` / `ToggleMute` on the default render endpoint. |
 | `Interop/TaskbarColor.cs` | `Sample()` — the taskbar's pixel color. |
+| `Interop/ZoneTip.cs` | Native tracking tooltip; the WinForms one cannot show here. |
 | `Ui/AboutForm.cs` | About / how-to dialog. |
 | `Localization/` | `Lang`, `Strings`, `Loc` (EN/VI table + persistence). |
 | `scripts/` | `register.bat`, `unregister.bat`, `rebuild.ps1`. Paths inside resolve `%~dp0..`. |
@@ -132,17 +133,28 @@ constraints, most learned the hard way:
   **At rest the band must read as plain taskbar text** — measured, both zone columns
   match the background exactly. Two things carry discoverability, and neither is
   redundant:
-  - 1px full-height zone marks at the 1/4 and 3/4 boundaries, `Color.FromArgb(110,
-    ForeColor)` in `MarqueeLabel.Render`, **only while `_hover`**. Three earlier shapes
-    failed and are not worth retrying: a zone tint plus a Segoe MDL2 glyph chip (looked
-    like a floating widget pasted into the taskbar), always-on full-height lines (read as
-    crossing out the title), and always-on 3px edge stubs (too faint to notice). Hover is
-    the right trigger because a pointer already on the band means a click is coming.
-    Drawn *after* the text: `DrawText` passes a backColor, so an opaque glyph run wipes
-    out anything underneath — that is how the 1/4 line once vanished behind the artist
-    row. `_hover` already repaints on enter and leave via `UpdateScroll`, so no extra
-    wiring. `ZoneAt` stays the single definition of the split; keep it, these marks and
-    `AboutForm.DrawBand` in step.
+  - A hover tooltip naming the zone (`ZoneTip` + `ShowZoneTip`, armed by `_tipTimer`
+    500ms after the pointer crosses into a zone). It is anchored at that zone's *left
+    edge*, so it says which control this is and where the boundary is at once — the two
+    jobs the band itself no longer does. Nothing is painted on the band anymore: four
+    drawn shapes were tried and dropped, and none is worth retrying — a zone tint plus a
+    Segoe MDL2 glyph chip (looked like a floating widget pasted into the taskbar),
+    always-on full-height lines (read as crossing out the title), always-on 3px edge stubs
+    (too faint to notice), and hover-only 1px full-height lines (still marks *where*, never
+    *which*). `AboutForm.DrawBand` keeps its always-on dividers on purpose: it is a labeled
+    diagram, not the band. `ZoneAt` stays the single definition of the split, and
+    `ShowZoneTip`'s anchor x must be derived from the same 1/4 and 3/4 fractions.
+  - **The tooltip has to be native (`Interop/ZoneTip.cs`), not WinForms.** Both WinForms
+    paths were measured to fail here: `SetToolTip`'s automatic placement drops the tip
+    *under the cursor*, i.e. inside the band and clipped by the screen's bottom edge, and
+    `ToolTip.Show` — the only way to place one by hand — created and positioned the window
+    correctly and then never made it visible, because it refuses whenever the control's
+    root window is not the active one (`TopLevelControl` is `null` in a deskband and a
+    taskbar band is never active). `ShowAlways` only governs the automatic path.
+    `ZoneTip` drives a `tooltips_class32` popup with `TTF_TRACK | TTF_ABSOLUTE`. Two traps
+    in it: `TTM_GETBUBBLESIZE` reports a 20px tip as 6px, so the height comes from
+    `GetWindowRect` after activation and is cached; and `TTF_ABSOLUTE` anchors the
+    *top-left*, so placing the tip clear of the taskbar means subtracting that height.
   - `Loc.IsFirstRun()` + `Loc.MarkSeen()` (marker `%AppData%\MiniPlayer\seen.txt`) show
     the About dialog once, ever. **They are split on purpose.** They used to be one
     call that wrote the marker and returned true, while the dialog only opened 1500ms
