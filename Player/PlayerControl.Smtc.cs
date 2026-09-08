@@ -83,11 +83,18 @@ namespace MiniPlayerBand
             Session cur = null;
             try { cur = _mgr.GetCurrentSession(); }
             catch { }
-            if (IsPlaying(cur)) return cur;
-            if (sessions != null)
-                foreach (var s in sessions)
-                    if (IsPlaying(s)) return s;
-            return cur;  // nothing playing: keep the current session (paused track stays visible)
+            return PickBestCore(cur, sessions, IsPlaying);
+        }
+
+        // The selection policy on its own, with no WinRT type in sight -- Session is a
+        // sealed COM class and can't be mocked, so this is what PickBestTests exercises.
+        internal static T PickBestCore<T>(T current, IReadOnlyList<T> items, Func<T, bool> isPlaying) where T : class
+        {
+            if (current != null && isPlaying(current)) return current;
+            if (items != null)
+                foreach (var item in items)
+                    if (isPlaying(item)) return item;
+            return current;  // nothing playing: keep the current session (paused track stays visible)
         }
 
         static bool IsPlaying(Session s)
@@ -103,14 +110,20 @@ namespace MiniPlayerBand
         {
             try
             {
-                var st = s.GetPlaybackInfo().PlaybackStatus;
-                if (st == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped
-                 || st == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Closed) return true;
                 var t = s.GetTimelineProperties();
-                if (t.EndTime <= t.StartTime) return false;  // no known duration -> can't tell, keep it
-                return t.Position >= t.EndTime - TimeSpan.FromSeconds(1.5);
+                return HasEndedCore(s.GetPlaybackInfo().PlaybackStatus, t.StartTime, t.EndTime, t.Position);
             }
             catch { return false; }
+        }
+
+        // The end-of-track heuristic on its own -- see HasEnded's comment for the rule.
+        internal static bool HasEndedCore(GlobalSystemMediaTransportControlsSessionPlaybackStatus status,
+            TimeSpan start, TimeSpan end, TimeSpan position)
+        {
+            if (status == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped
+             || status == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Closed) return true;
+            if (end <= start) return false;  // no known duration -> can't tell, keep it
+            return position >= end - TimeSpan.FromSeconds(1.5);
         }
 
         void OnAnyPlayback(Session s, PlaybackInfoChangedEventArgs e) => UiPost(Resync);
@@ -177,28 +190,35 @@ namespace MiniPlayerBand
 
         // Elapsed time comes from the app's own LastUpdatedTime, which stays correct however
         // often we re-read; the Stopwatch stamp is the fallback for apps that don't set it.
-        TimeSpan CurrentPos()
+        TimeSpan CurrentPos() => ComputeCurrentPos(_tlPos, _tlStart, _tlEnd, _playing, _tlUpdated,
+            DateTimeOffset.Now, _tlStamp, System.Diagnostics.Stopwatch.GetTimestamp(), System.Diagnostics.Stopwatch.Frequency);
+
+        // The interpolation math on its own -- nowTicks/frequency are Stopwatch.GetTimestamp()
+        // / Stopwatch.Frequency taken as parameters so a test can fake elapsed time.
+        internal static TimeSpan ComputeCurrentPos(TimeSpan lastPos, TimeSpan start, TimeSpan end,
+            bool playing, DateTimeOffset lastUpdated, DateTimeOffset now, long tlStampTicks, long nowTicks, double frequency)
         {
-            TimeSpan pos = _tlPos;
-            if (_playing)
+            TimeSpan pos = lastPos;
+            if (playing)
             {
-                DateTimeOffset now = DateTimeOffset.Now;
-                TimeSpan elapsed = _tlUpdated > now - TimeSpan.FromHours(12) && _tlUpdated <= now
-                    ? now - _tlUpdated  // app's timestamp: correct across Refresh / re-reads
-                    : TimeSpan.FromSeconds((System.Diagnostics.Stopwatch.GetTimestamp() - _tlStamp) / (double)System.Diagnostics.Stopwatch.Frequency);
+                TimeSpan elapsed = lastUpdated > now - TimeSpan.FromHours(12) && lastUpdated <= now
+                    ? now - lastUpdated  // app's timestamp: correct across Refresh / re-reads
+                    : TimeSpan.FromSeconds((nowTicks - tlStampTicks) / frequency);
                 if (elapsed > TimeSpan.Zero) pos += elapsed;
             }
-            if (pos < _tlStart) pos = _tlStart;
-            if (_tlEnd > _tlStart && pos > _tlEnd) pos = _tlEnd;
+            if (pos < start) pos = start;
+            if (end > start && pos > end) pos = end;
             return pos;
         }
 
         // 0..1 played fraction; -1 = hide (no known duration).
-        double ProgressFraction()
+        double ProgressFraction() => ComputeProgressFraction(_tlStart, _tlEnd, CurrentPos());
+
+        internal static double ComputeProgressFraction(TimeSpan start, TimeSpan end, TimeSpan pos)
         {
-            TimeSpan dur = _tlEnd - _tlStart;
+            TimeSpan dur = end - start;
             if (dur <= TimeSpan.Zero) return -1;
-            return (CurrentPos() - _tlStart).TotalSeconds / dur.TotalSeconds;
+            return (pos - start).TotalSeconds / dur.TotalSeconds;
         }
 
         async Task RefreshAsync()

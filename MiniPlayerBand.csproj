@@ -7,6 +7,12 @@
     <RootNamespace>MiniPlayerBand</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Tests/ nests under the repo root (MiniPlayerBand.csproj must stay there for the
+         registered codebase path), so the implicit glob would otherwise compile the test
+         project's sources, and its obj/ AssemblyInfo, into this one too. -->
+    <Compile Remove="Tests\**\*.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- lets dotnet build net48 without Visual Studio installed -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <!-- deskband (IDeskBand2 COM plumbing) WinForms host -->

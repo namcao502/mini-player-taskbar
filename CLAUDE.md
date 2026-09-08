@@ -25,9 +25,10 @@ when Win11 support was dropped, so `PlayerControl` now has exactly one host.
 - Unregister (admin): `scripts\unregister.bat`
 - Rebuild + hot-swap while loaded: `scripts\rebuild.ps1`
 - Enable: right-click the taskbar > Toolbars > Mini Player
+- Test: `dotnet test Tests\MiniPlayerBand.Tests\MiniPlayerBand.Tests.csproj`
 
 Built with the .NET SDK alone (no Visual Studio); `Microsoft.NETFramework.ReferenceAssemblies`
-provides the net48 targeting pack. No tests or linter.
+provides the net48 targeting pack. No linter.
 
 ### Rebuild loop (important)
 
@@ -64,7 +65,7 @@ registered.
 | `Player/PlayerControl.Theme.cs` | `IsLight`/`Shade`, `ApplyTheme`, `OnUserPreferenceChanged`. |
 | `Player/PlayerControl.Paint.cs` | `OnPaintBackground`, `MeasureMetrics`, `DrawProgress`, `RepaintChrome`, `OnLayout`. |
 | `Player/PlayerControl.Menu.cs` | Right-click menu, language switch, copy helpers, `ShowAbout`. |
-| `Player/PlayerControl.Smtc.cs` | Session pick + re-hook, title/playback/timeline reads, `RunCommand`. |
+| `Player/PlayerControl.Smtc.cs` | Session pick + re-hook, title/playback/timeline reads, `RunCommand`. The selection/timing/heuristic math is split into `internal static` `*Core`/`Compute*` functions with no `Session` in their signature, specifically so `Tests/` can exercise them -- `Session` is a sealed WinRT COM class and can't be mocked. Keep new logic in the pure function and the instance method a thin wrapper, or the split silently drifts apart. |
 | `Player/PlayerControl.Input.cs` | Click zones, the hover tooltip, seek, wheel-volume, mute. |
 | `Player/MarqueeLabel.cs` | The scrolling title and the click-zone geometry (`ZoneAt`). Draws nothing on hover, on purpose. |
 | `Interop/CoreAudio.cs` | Raw Core Audio COM declarations (vtable order matters). |
@@ -74,6 +75,7 @@ registered.
 | `Ui/AboutForm.cs` | About / how-to dialog. |
 | `Localization/` | `Lang`, `Strings`, `Loc` (EN/VI table + persistence). |
 | `scripts/` | `register.bat`, `unregister.bat`, `rebuild.ps1`. Paths inside resolve `%~dp0..`. |
+| `Tests/MiniPlayerBand.Tests/` | xUnit project covering the pure `*Core`/`Compute*` functions above. Nests under the repo root alongside `MiniPlayerBand.csproj`, so that project excludes `Tests\**\*.cs` from its own implicit glob -- otherwise it compiles the test sources (and collides with their generated `AssemblyInfo.cs`) into itself too. |
 
 ## Architecture
 
