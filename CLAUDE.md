@@ -77,7 +77,7 @@ registered.
 | `Interop/SystemVolume.cs` | `Adjust` / `ToggleMute` on the default render endpoint. |
 | `Interop/TaskbarColor.cs` | `Sample()` — the taskbar's pixel color. |
 | `Interop/ZoneTip.cs` | Native tracking tooltip; the WinForms one cannot show here. |
-| `Ui/AboutForm.cs` | About / how-to dialog. |
+| `Ui/AboutForm.cs` | About / how-to dialog. Embeds a second, real `PlayerControl` (`firstRunEligible: false`) as a live, interactive demo instead of drawing a mock. |
 | `Localization/` | `Lang`, `Strings`, `Loc` (EN/VI table + persistence). |
 | `scripts/` | `register.bat`, `unregister.bat`, `rebuild.ps1`. Paths inside resolve `%~dp0..`. |
 | `Tests/MiniPlayerBand.Tests/` | xUnit project covering the pure `*Core`/`Compute*` functions above. Nests under the repo root alongside `MiniPlayerBand.csproj`, so that project excludes `Tests\**\*.cs` from its own implicit glob -- otherwise it compiles the test sources (and collides with their generated `AssemblyInfo.cs`) into itself too. |
@@ -148,9 +148,14 @@ constraints, most learned the hard way:
     Segoe MDL2 glyph chip (looked like a floating widget pasted into the taskbar),
     always-on full-height lines (read as crossing out the title), always-on 3px edge stubs
     (too faint to notice), and hover-only 1px full-height lines (still marks *where*, never
-    *which*). `AboutForm.DrawBand` keeps its always-on dividers on purpose: it is a labeled
-    diagram, not the band. `ZoneAt` stays the single definition of the split, and
-    `ShowZoneTip`'s anchor x must be derived from the same 1/4 and 3/4 fractions.
+    *which*). `ZoneAt` stays the single definition of the split, and `ShowZoneTip`'s anchor x
+    must be derived from the same 1/4 and 3/4 fractions. `AboutForm` used to compensate with a
+    hand-painted mock band (fixed sample text, always-on dividers) since a static diagram was
+    the only way to label an invisible split — it now embeds a second, real `PlayerControl`
+    instead, so hovering/clicking the demo triggers this same real tooltip and is the
+    explanation. That demo is built with `firstRunEligible: false` — `PlayerControl`'s
+    first-run About prompt (`Loc.IsFirstRun()` in `OnHandleCreated`) would otherwise fire on
+    the demo too and stack a second About on top of the first during a genuine first run.
   - **The tooltip has to be native (`Interop/ZoneTip.cs`), not WinForms.** Both WinForms
     paths were measured to fail here: `SetToolTip`'s automatic placement drops the tip
     *under the cursor*, i.e. inside the band and clipped by the screen's bottom edge, and

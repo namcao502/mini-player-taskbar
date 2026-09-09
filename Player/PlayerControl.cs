@@ -77,8 +77,13 @@ namespace MiniPlayerBand
         // The sampled taskbar color the player is currently painted with.
         public Color BandColor => _bg;
 
-        public PlayerControl()
+        // False for the demo PlayerControl AboutForm embeds -- else a genuine first run
+        // would spawn a second About on top of the first (see OnHandleCreated).
+        readonly bool _firstRunEligible;
+
+        public PlayerControl(bool firstRunEligible = true)
         {
+            _firstRunEligible = firstRunEligible;
             ApplyTheme();  // sample the taskbar color first, so children are built with it
 
             _title.Font = new Font("Segoe UI", 9f);
@@ -119,7 +124,7 @@ namespace MiniPlayerBand
             _inited = true;
             // Shown once ever, since nothing on the band spells the gestures out. Delayed
             // so the band paints first instead of opening a modal over a blank strip.
-            if (Loc.IsFirstRun()) _firstRunTimer.Start();
+            if (_firstRunEligible && Loc.IsFirstRun()) _firstRunTimer.Start();
             _ = Init();
         }
 

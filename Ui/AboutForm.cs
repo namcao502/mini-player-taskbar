@@ -1,5 +1,8 @@
-// About / how-to-use dialog: a labeled *mock* of the band, since a text list of invisible
-// gestures is hard to map on. A live PlayerControl would fire real transport commands.
+// About / how-to-use dialog. Embeds a second, real PlayerControl as a live demo -- since
+// a text list of invisible gestures is hard to map on, showing the actual band (real
+// track, real prev/play/next, real hover tooltip) teaches it better than a diagram would.
+// That demo is built with firstRunEligible: false, or a genuine first run would open a
+// second About on top of this one (see PlayerControl.OnHandleCreated).
 
 using System;
 using System.Drawing;
@@ -12,22 +15,16 @@ namespace MiniPlayerBand
         const TextFormatFlags F = TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding;
         const TextFormatFlags FWrap = TextFormatFlags.NoPrefix | TextFormatFlags.WordBreak;
 
-        const string SampleTitle = "Bohemian Rhapsody";  // sample data, not translated
-        const string SampleArtist = "Queen";
-
-        readonly Color _bg, _fg, _fgDim;
         readonly string _heading;
         readonly string[] _captions;   // one gesture per line
 
         readonly Font _headingFont;
-        readonly Font _bandFont;        // matches the real title font (Segoe UI 9pt)
         readonly Button _ok;
+        readonly PlayerControl _demoPlayer;  // the live demo band; see file header
+        Rectangle _bandRect;                 // where RenderContent lays out the demo
 
-        public AboutForm(Color bg, Color fg, Color fgDim, Version version)
+        public AboutForm(Version version)
         {
-            _bg = bg;
-            _fg = fg;
-            _fgDim = fgDim;
             _heading = Loc.AppName + " " + version;
 
             _captions = new[]
@@ -40,7 +37,6 @@ namespace MiniPlayerBand
 
             Font = SystemFonts.MessageBoxFont;  // clean dialog look (Segoe UI 9pt)
             _headingFont = new Font(Font.FontFamily, Font.SizeInPoints + 2f, FontStyle.Bold);
-            _bandFont = new Font("Segoe UI", 9f);
 
             Text = Loc.AppName;
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -70,10 +66,13 @@ namespace MiniPlayerBand
 
             // Size the window to the measured content, then pin the OK button.
             int width = pad * 2 + Scale(430);
-            int height = RenderContent(null, width);   // measure pass: returns content bottom
+            int height = RenderContent(null, width);   // measure pass: also sets _bandRect
             ClientSize = new Size(width, height + pad + _ok.Height + pad);
             _ok.Location = new Point(ClientSize.Width - pad - _ok.Width,
                                      ClientSize.Height - pad - _ok.Height);
+
+            _demoPlayer = new PlayerControl(firstRunEligible: false) { Bounds = _bandRect };
+            Controls.Add(_demoPlayer);
         }
 
         int LineH() => TextRenderer.MeasureText("Ag", Font).Height;
@@ -104,9 +103,9 @@ namespace MiniPlayerBand
             if (g != null) TextRenderer.DrawText(g, desc, Font, new Rectangle(x, y, contentW, descSize.Height), SystemColors.ControlText, FWrap);
             y += descSize.Height + lineH;
 
-            // ---- the mock band ----
+            // ---- the live demo band -- painted by _demoPlayer itself, not here ----
             int bandH = Scale(46);
-            if (g != null) DrawBand(g, new Rectangle(x, y, contentW, bandH));
+            _bandRect = new Rectangle(x, y, contentW, bandH);
             y += bandH + lineH / 2;
 
             // Zone labels centered under each click zone, with a fraction sub-caption.
@@ -138,42 +137,6 @@ namespace MiniPlayerBand
             return y;
         }
 
-        // Paint the mock band: taskbar-color fill, sample title/artist, a ~45% progress
-        // bar, and faint dividers at 1/4 and 3/4 marking the click zones on the mock
-        // (the real band shows a hover tooltip instead; this is a labeled diagram).
-        void DrawBand(Graphics g, Rectangle band)
-        {
-            using (var bg = new SolidBrush(_bg))
-                g.FillRectangle(bg, band);
-
-            int inner = Math.Max(3, band.Height / 12);
-            int barH = Math.Max(2, band.Height / 16);
-            int textH = band.Height - barH - inner;   // rows sit above the bar
-            int rowH = textH / 2;
-            int tx = band.X + inner;
-
-            int titleY = band.Y + (rowH - _bandFont.Height) / 2;
-            int artistY = band.Y + rowH + (rowH - _bandFont.Height) / 2;
-            TextRenderer.DrawText(g, SampleTitle, _bandFont, new Point(tx, titleY), _fg, F);
-            TextRenderer.DrawText(g, SampleArtist, _bandFont, new Point(tx, artistY), _fgDim, F);
-
-            // Faint zone dividers, only across the text area (not over the bar).
-            using (var pen = new Pen(Color.FromArgb(90, _fg)))
-            {
-                int d1 = band.X + band.Width / 4;
-                int d3 = band.X + band.Width * 3 / 4;
-                g.DrawLine(pen, d1, band.Y + inner, d1, band.Y + textH);
-                g.DrawLine(pen, d3, band.Y + inner, d3, band.Y + textH);
-            }
-
-            // Progress bar along the bottom edge: dim track + brighter played portion.
-            int by = band.Bottom - barH;
-            using (var track = new SolidBrush(PlayerControl.Shade(_bg, 24)))
-                g.FillRectangle(track, band.X, by, band.Width, barH);
-            using (var fill = new SolidBrush(_fg))
-                g.FillRectangle(fill, band.X, by, (int)(band.Width * 0.45), barH);
-        }
-
         static void DrawCentered(Graphics g, string s, Font f, int cx, int y, Color c)
         {
             int w = TextRenderer.MeasureText(g, s, f, Size.Empty, F).Width;
@@ -182,7 +145,7 @@ namespace MiniPlayerBand
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { _headingFont?.Dispose(); _bandFont?.Dispose(); }
+            if (disposing) { _headingFont?.Dispose(); }
             base.Dispose(disposing);
         }
     }

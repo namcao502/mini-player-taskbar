@@ -121,7 +121,7 @@ namespace MiniPlayerBand
         void ShowAbout()
         {
             var v = typeof(PlayerControl).Assembly.GetName().Version;
-            using (var dlg = new AboutForm(_bg, _fg, _fgDim, v))
+            using (var dlg = new AboutForm(v))
                 dlg.ShowDialog(this);
         }
     }
