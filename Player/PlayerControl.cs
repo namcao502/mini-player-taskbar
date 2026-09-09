@@ -148,6 +148,19 @@ namespace MiniPlayerBand
                 // Static events: they leak the control otherwise.
                 SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
                 SystemEvents.SessionSwitch -= OnSessionSwitch;
+                // Same reasoning for SMTC: toggling the toolbar off/on within one Explorer
+                // session must not keep this instance alive through these subscriptions.
+                if (_mgr != null)
+                {
+                    _mgr.CurrentSessionChanged -= OnCurrentSessionChanged;
+                    _mgr.SessionsChanged -= OnSessionsChanged;
+                }
+                foreach (var watched in _watched) watched.PlaybackInfoChanged -= OnAnyPlayback;
+                if (_session != null)
+                {
+                    _session.MediaPropertiesChanged -= OnMediaProps;
+                    _session.TimelinePropertiesChanged -= OnTimeline;
+                }
                 _volTimer?.Dispose(); _clearTimer?.Dispose(); _progressTimer?.Dispose(); _settleTimer?.Dispose();
                 _themeTimer?.Dispose(); _initTimer?.Dispose(); _firstRunTimer?.Dispose(); _tipTimer?.Dispose();
                 _menu?.Dispose(); _chromeBuf?.Dispose(); _tip?.Dispose();

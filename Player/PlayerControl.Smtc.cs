@@ -20,8 +20,8 @@ namespace MiniPlayerBand
             try
             {
                 _mgr = await SessionManager.RequestAsync();
-                _mgr.CurrentSessionChanged += (s, e) => UiPost(Resync);
-                _mgr.SessionsChanged += (s, e) => UiPost(Resync);
+                _mgr.CurrentSessionChanged += OnCurrentSessionChanged;
+                _mgr.SessionsChanged += OnSessionsChanged;
                 UiPost(Resync);
             }
             catch
@@ -125,6 +125,10 @@ namespace MiniPlayerBand
             if (end <= start) return false;  // no known duration -> can't tell, keep it
             return position >= end - TimeSpan.FromSeconds(1.5);
         }
+
+        // Named (not inline lambdas) so Dispose can unhook them from _mgr.
+        void OnCurrentSessionChanged(SessionManager s, CurrentSessionChangedEventArgs e) => UiPost(Resync);
+        void OnSessionsChanged(SessionManager s, SessionsChangedEventArgs e) => UiPost(Resync);
 
         void OnAnyPlayback(Session s, PlaybackInfoChangedEventArgs e) => UiPost(Resync);
         void OnMediaProps(Session s, MediaPropertiesChangedEventArgs e) => UiPost(() => { _ = RefreshAsync(); });
